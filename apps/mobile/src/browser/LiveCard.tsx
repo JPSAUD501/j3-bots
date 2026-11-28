@@ -4,6 +4,7 @@ import {
   drawnRect,
   fitted,
   NO_ZOOM,
+  pointersInPicture,
   siteOf,
   tabFaces,
   type ViewerTab,
@@ -77,7 +78,14 @@ function Card({
         onPress={open}
         className="overflow-hidden rounded-xl border border-border bg-surface"
       >
-        <Picture tabRef={tab.ref} address={tab.url} live={live} onIt={tab.onIt} width={width} />
+        <Picture
+          tabRef={tab.ref}
+          address={tab.url}
+          live={live}
+          onIt={tab.onIt}
+          pointers={!pointersInPicture(tab.where)}
+          width={width}
+        />
         <View className="min-h-11 flex-row items-center gap-2 px-3 py-2">
           <Icon icon={AppWindow} size={16} color="accent-muted-foreground" />
           <Text numberOfLines={1} className="min-w-0 flex-1 text-sm text-foreground">
@@ -101,12 +109,15 @@ function Picture({
   address,
   live,
   onIt,
+  pointers,
   width,
 }: {
   readonly tabRef: BrowserTabRef;
   readonly address: string;
   readonly live: boolean;
   readonly onIt: ReadonlyArray<BotId>;
+  /** Whether the bots' pointers are drawn over the picture: not where the page draws them itself. */
+  readonly pointers: boolean;
   readonly width: number;
 }) {
   const focused = useIsFocused();
@@ -154,7 +165,7 @@ function Picture({
       {last !== null && (
         <Image source={{ uri: last.uri }} resizeMode="contain" className="size-full" />
       )}
-      {view !== null && drawn !== null && page !== null && (
+      {view !== null && drawn !== null && page !== null && pointers && (
         <BotCursors
           cursors={cursors}
           tab={tabRef}

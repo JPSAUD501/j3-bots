@@ -208,6 +208,8 @@ const playServer = Effect.gen(function* () {
   const reached = yield* Deferred.make<PageHost>();
   const seen = yield* Deferred.make<Uint8Array>();
   const done = yield* Deferred.make<void>();
+  /** A picture the check hands a page to read, at `/frame`. */
+  let frame: Uint8Array = new Uint8Array();
   yield* HttpServer.serveEffect(
     Effect.gen(function* () {
       const request = yield* HttpServerRequest.HttpServerRequest;
@@ -227,6 +229,8 @@ const playServer = Effect.gen(function* () {
         yield* Deferred.succeed(seen, new Uint8Array(yield* Effect.orDie(request.arrayBuffer)));
         return HttpServerResponse.empty();
       }
+      if (path === "/frame")
+        return HttpServerResponse.uint8Array(frame, { contentType: "image/jpeg" });
       return PAGES[path]?.() ?? HttpServerResponse.empty({ status: 404 });
     }).pipe(Effect.scoped),
   );
@@ -234,7 +238,15 @@ const playServer = Effect.gen(function* () {
   const { address } = yield* HttpServer.HttpServer;
   if (!NetAddress.isInetAddress(address))
     return yield* Effect.die("The check's server has no port.");
-  return { port: address.port, reached, seen };
+  return {
+    port: address.port,
+    reached,
+    seen,
+    hand: (picture: Uint8Array) =>
+      Effect.sync(() => {
+        frame = picture;
+      }),
+  };
 });
 
 /** Electron running the desktop's browser, linked to `server`, in a folder of its own. */
@@ -291,6 +303,11 @@ const reasonOf = (error: BrowserHostError) => error.reason;
 /** A point of the page, as the check reads it there, and the element under it. */
 const decodePoint = Schema.decodeUnknownSync(
   Schema.Struct({ x: Schema.Finite, y: Schema.Finite, under: Schema.NullOr(Schema.String) }),
+);
+
+/** The pointer's and the tag's pixels in a picture, as a page counts them. */
+const decodeInk = Schema.decodeUnknownSync(
+  Schema.Struct({ blue: Schema.Finite, white: Schema.Finite }),
 );
 
 const paeth = (left: number, up: number, upLeft: number) => {
@@ -358,7 +375,7 @@ describe.skipIf(process.platform !== "linux" || process.env["DISPLAY"] === undef
       "runs the server's tabs: pages, pop-ups, downloads, uploads, dialogs and sign-ins",
       () =>
         Effect.gen(function* () {
-          const { port, reached, seen: pictured } = yield* playServer;
+          const { port, reached, seen: pictured, hand } = yield* playServer;
           yield* runBrowser(`http://127.0.0.1:${port}`);
           const host = yield* Deferred.await(reached).pipe(Effect.timeout(STEP));
           const site = `http://pages.j3test.localhost:${port}`;
@@ -729,6 +746,41 @@ describe.skipIf(process.platform !== "linux" || process.env["DISPLAY"] === undef
           const asShown = inkOf(yield* Deferred.await(pictured).pipe(Effect.timeout(STEP)));
           assert.isAbove(asShown.blue, 0);
           assert.isAbove(asShown.white, 0);
+          // A picture for the person through a viewer shows them too, taken as the bot's next
+          // click keeps its tag open. A tab of the site's, at the picture itself, counts its
+          // pixels as `inkOf` does, since the page's own policy lets it fetch nothing.
+          yield* host.act({ tab: onScreen, action: { action: "click", locator: "#press" } });
+          const watched = yield* host
+            .screencast({ tab: onScreen, maxWidth: 800, maxHeight: 600, quality: 100 })
+            .pipe(Stream.runHead, Effect.flatMap(Effect.fromOption), Effect.timeout(STEP));
+          yield* hand(watched.jpeg);
+          const reader = BrowserTabRef.make("tab-reader");
+          yield* host.open({ tab: reader, url: `${site}/frame`, background: true, private: false });
+          const forPerson = decodeInk(
+            (yield* host.evaluate({
+              tab: reader,
+              awaitPromise: true,
+              timeoutMs: 5_000,
+              expression: `(async () => {
+                const picture = await createImageBitmap(await (await fetch("/frame")).blob());
+                const canvas = new OffscreenCanvas(picture.width, picture.height);
+                const paint = canvas.getContext("2d");
+                paint.drawImage(picture, 0, 0);
+                const { data } = paint.getImageData(0, 0, picture.width, picture.height);
+                let blue = 0;
+                let white = 0;
+                for (let at = 0; at < data.length; at += 4) {
+                  const [red, green, blueness] = [data[at], data[at + 1], data[at + 2]];
+                  if (blueness > red + 60 && blueness > green + 40) blue += 1;
+                  if (red > 235 && green > 235 && blueness > 235) white += 1;
+                }
+                return { blue, white };
+              })()`,
+            })).value,
+          );
+          assert.isAbove(forPerson.blue, 0);
+          assert.isAbove(forPerson.white, 0);
+          yield* host.close(reader);
           // A field the bot types in shows the bot's caret.
           yield* host.act({
             tab: onScreen,

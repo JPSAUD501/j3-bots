@@ -37,6 +37,8 @@ interface SurfaceProps {
   readonly holding: boolean;
   /** The bots on the tab, the most recent first: whose pointers show. */
   readonly onIt: ReadonlyArray<BotId>;
+  /** Whether the bots' pointers are drawn over the picture: not where the page draws them itself. */
+  readonly pointers: boolean;
   /** What the page's text field is called to assistive technology. */
   readonly label: string;
   readonly description: string;
@@ -67,6 +69,7 @@ export function BrowserSurface({
   send,
   holding,
   onIt,
+  pointers,
   label,
   description,
   onLeave,
@@ -344,14 +347,16 @@ export function BrowserSurface({
           usable ? "cursor-default touch-none" : "pointer-events-none",
         )}
       />
-      <BotCursors
-        view={view}
-        tab={tab}
-        address={address}
-        viewport={viewport}
-        onIt={onIt}
-        held={holding}
-      />
+      {pointers && (
+        <BotCursors
+          view={view}
+          tab={tab}
+          address={address}
+          viewport={viewport}
+          onIt={onIt}
+          held={holding}
+        />
+      )}
       {usable && (
         <PageField
           ref={field}

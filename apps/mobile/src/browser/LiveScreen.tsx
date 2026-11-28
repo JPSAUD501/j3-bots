@@ -9,6 +9,7 @@ import {
   listedTabs,
   needsYouElsewhere,
   neighborTab,
+  pointersInPicture,
   type ShownTab,
   shownTab,
   siteOf,
@@ -373,6 +374,7 @@ function TabLive({
               usable={usable}
               send={use.send}
               onIt={tab.onIt}
+              pointers={!pointersInPicture(tab.where)}
               follow={follow}
               onFollowing={() => setFollowing(false)}
               holding={use.holding}

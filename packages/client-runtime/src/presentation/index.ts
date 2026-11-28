@@ -148,6 +148,7 @@ export {
   type PageUseEvent,
   type PageUseState,
   pageUseStep,
+  pointersInPicture,
   sharedViewerTab,
   tabAfterClose,
   tabComputerName,

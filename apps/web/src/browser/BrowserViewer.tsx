@@ -3,6 +3,7 @@ import type { BrowserControl, BrowserViewState } from "@j3-bots/client-runtime";
 import {
   botViewerTab,
   frozenOf,
+  pointersInPicture,
   tabComputerName,
   tabFaces,
   viewLiveness,
@@ -219,6 +220,7 @@ function TabPane({
               send={use.send}
               holding={use.holding}
               onIt={shown.onIt}
+              pointers={!pointersInPicture(shown.where)}
               label={t("browser.page", { site: site || t("browser.panel.newTab") })}
               description={t("browser.viewer.touchIsUsing")}
               onLeave={onLeavePage}

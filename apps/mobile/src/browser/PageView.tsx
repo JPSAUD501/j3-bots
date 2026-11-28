@@ -110,6 +110,7 @@ export function PageView({
   usable,
   send,
   onIt,
+  pointers,
   follow,
   onFollowing,
   holding,
@@ -129,6 +130,8 @@ export function PageView({
   readonly send: (input: BrowserInput) => void;
   /** The bots on the tab, whose pointers show. */
   readonly onIt: ReadonlyArray<BotId>;
+  /** Whether the bots' pointers are drawn over the picture: not where the page draws them itself. */
+  readonly pointers: boolean;
   /** The bot the view follows, while it does; null while the person moves it themselves. */
   readonly follow: BotId | null;
   /** The person moved the view, which stops following. */
@@ -411,7 +414,7 @@ export function PageView({
             }}
           />
         ))}
-      {drawn !== null && page !== null && (
+      {drawn !== null && page !== null && pointers && (
         <BotCursors
           cursors={cursors}
           tab={tabRef}

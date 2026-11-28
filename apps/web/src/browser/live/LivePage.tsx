@@ -100,6 +100,7 @@ export function LivePage({
   usable,
   send,
   onIt,
+  pointers,
   follow,
   onFollowing,
   holding,
@@ -122,6 +123,8 @@ export function LivePage({
   readonly send: (input: BrowserInput) => void;
   /** The bots on the tab, whose pointers show. */
   readonly onIt: ReadonlyArray<BotId>;
+  /** Whether the bots' pointers are drawn over the picture: not where the page draws them itself. */
+  readonly pointers: boolean;
   /** The bot the view follows, while it does; null while the person moves it themselves. */
   readonly follow: BotId | null;
   /** The person moved the view, which stops following. */
@@ -511,7 +514,7 @@ export function LivePage({
         className="absolute inset-0 block"
         style={{ width: viewSize?.width ?? 0, height: viewSize?.height ?? 0 }}
       />
-      {drawn !== null && (
+      {drawn !== null && pointers && (
         <div
           className="pointer-events-none absolute"
           style={{ left: drawn.left, top: drawn.top, width: drawn.width, height: drawn.height }}

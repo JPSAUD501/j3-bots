@@ -968,8 +968,8 @@ export const makeDesktopBrowser = (options: {
             // Painting for as long as someone watches, though the tab is hidden.
             const entry = entries.get(input.tab);
             if (entry?.reported === true) yield* entry.tab.paint;
-            // A viewer draws the bots' pointers over the picture itself.
-            if (entry !== undefined) yield* entry.drawing.hidden;
+            // The page draws the bots' pointers while it is watched, as the person here sees them.
+            if (entry !== undefined) yield* entry.drawing.watched;
             return tabCalls.screencast(input);
           }),
         ),
