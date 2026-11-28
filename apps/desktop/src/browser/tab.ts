@@ -25,8 +25,12 @@ const DRIVING = /^(?:Input\.|Page\.navigate$|Runtime\.(?:evaluate|callFunctionOn
 /** How long after a bot's input a download it began is still the bot's. */
 const BOT_DOWNLOAD_WINDOW_MS = 5_000;
 
-/** The kinds of the view's own input that are the person using the page. */
-const USING = new Set(["mouseDown", "keyDown", "rawKeyDown", "char", "touchStart", "gestureTap"]);
+/**
+ * The pointer input of the view that is someone using the page. The
+ * debugger's pointer input looks the same as the person's, so it is told
+ * apart by the bot's command in flight (verified on Electron 44).
+ */
+const POINTING = new Set(["mouseDown", "touchStart", "gestureTap"]);
 
 /** One tab of the desktop's browser: its view, its page, and its driver. */
 export interface DesktopTab {
@@ -44,7 +48,7 @@ export interface DesktopTab {
   /**
    * Drops the person's keys and mouse on the page while `effect` runs: a bot
    * is typing a saved login into it. The debugger's key events pass, as the
-   * view's own input hooks never see them, but its mouse events would not
+   * view's own key hook never sees them, but its mouse events would not
    * (verified on Electron 44): a fill uses none.
    */
   readonly holding: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
@@ -108,13 +112,25 @@ export const takeTab = (options: {
     });
 
     // Whose input reaches the view: the bot's, through the debugger, or the person's.
-    let driving = 0;
     let botAt = Number.NEGATIVE_INFINITY;
     let personAt = Number.NEGATIVE_INFINITY;
-    contents.on("input-event", (_event, input) => {
-      if (driving > 0 || !USING.has(input.type)) return;
+    const personUsing = () => {
       personAt = performance.now();
       events.personInput();
+    };
+    // A key is the person's when it comes through the view's own key hook,
+    // which the debugger's keys never pass (verified on Electron 44). One the
+    // hold above stopped never reached the page.
+    contents.on("before-input-event", (event, input) => {
+      if (input.type === "keyDown" && !event.defaultPrevented) personUsing();
+    });
+    // A press or a touch is the bot's while one of its input commands is in
+    // flight: the debugger hands the view the event before it answers the
+    // command (verified on Electron 44). The count is taken before the
+    // command goes, as a press may reach the view while it is being sent.
+    let inputsInFlight = 0;
+    contents.on("input-event", (_event, input) => {
+      if (inputsInFlight === 0 && POINTING.has(input.type)) personUsing();
     });
 
     // A tab of its own loads its blank page first; a pop-up, the address its opener gave.
@@ -151,14 +167,13 @@ export const takeTab = (options: {
       catch: (cause) => failed(`The page's identity was not set: ${String(cause)}`),
     });
     const relayed = yield* relayPage(contents, {
-      sent: (method, reply) => {
-        if (!DRIVING.test(method)) return;
-        botAt = performance.now();
-        driving += 1;
-        const done = () => {
-          driving -= 1;
+      sending: (method) => {
+        if (DRIVING.test(method)) botAt = performance.now();
+        if (!method.startsWith("Input.")) return () => undefined;
+        inputsInFlight += 1;
+        return () => {
+          inputsInFlight -= 1;
         };
-        reply.then(done, done);
       },
     }).pipe(Effect.mapError((error) => failed(error.detail)));
     const driver = yield* makeDriverPage({
