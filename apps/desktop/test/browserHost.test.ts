@@ -98,6 +98,33 @@ const PAGES: Readonly<Record<string, () => HttpServerResponse.HttpServerResponse
       ),
       { contentType: "text/html" },
     ),
+  // A page of one site embedding a page of another, which tells what it kept before.
+  "/embeds": () =>
+    HttpServerResponse.text(
+      page(
+        "Embeds",
+        `<script>
+           window.kept = new Promise((resolve) =>
+             addEventListener("message", (event) => resolve(event.data)),
+           );
+           const frame = document.createElement("iframe");
+           frame.src = "http://elsewhere.localhost:" + location.port + "/keeps";
+           document.body.append(frame);
+         </script>`,
+      ),
+      { contentType: "text/html" },
+    ),
+  "/keeps": () =>
+    HttpServerResponse.text(
+      page(
+        "Keeps",
+        `<script>
+           parent.postMessage(localStorage.getItem("kept"), "*");
+           localStorage.setItem("kept", "1");
+         </script>`,
+      ),
+      { contentType: "text/html" },
+    ),
   // A login whose form, once sent, names how much was typed into it.
   "/login": () =>
     HttpServerResponse.text(
@@ -400,6 +427,22 @@ describe.skipIf(process.platform !== "linux" || process.env["DISPLAY"] === undef
             awaitPromise: false,
           });
           assert.deepStrictEqual(left.value, [null, null]);
+          // Signing out of a site embedded in another's page clears what it keeps there too.
+          const elsewhereSite = `http://elsewhere.localhost:${port}`;
+          const keptThere = Effect.gen(function* () {
+            yield* host.navigate({ tab, to: { kind: "url", url: `${site}/embeds` } });
+            const kept = yield* host.evaluate({
+              tab,
+              expression: "window.kept",
+              awaitPromise: true,
+            });
+            return kept.value;
+          });
+          assert.strictEqual(yield* keptThere, null);
+          assert.strictEqual(yield* keptThere, "1");
+          yield* host.clearStorage({ origins: [elsewhereSite] });
+          assert.strictEqual(yield* keptThere, null);
+          yield* host.navigate({ tab, to: { kind: "url", url: `${site}/` } });
 
           // A pop-up is a tab of its own, which the server hears of and can drive.
           yield* host.act({ tab, action: { action: "click", locator: "text=Open pop-up" } });

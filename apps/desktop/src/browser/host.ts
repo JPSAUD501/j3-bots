@@ -28,10 +28,12 @@ import * as Fiber from "effect/Fiber";
 import * as PubSub from "effect/PubSub";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import {
   app,
   BaseWindow,
+  type ClearDataOptions,
   type ClearStorageDataOptions,
   type DownloadItem,
   type Rectangle,
@@ -109,8 +111,8 @@ const COOKIE_BATCH_MS = 1_000;
 const STORAGE_EVERY_MS = 5 * 60_000;
 
 /**
- * What signing out clears of an origin besides cookies, as Electron names
- * it: the site data a sign-in may be kept in.
+ * What signing out clears besides cookies, as Electron names it: the site
+ * data a sign-in may be kept in. Of every origin, by `clearStorageData`...
  */
 const CLEARED_STORAGE: NonNullable<ClearStorageDataOptions["storages"]> = [
   "filesystem",
@@ -119,6 +121,17 @@ const CLEARED_STORAGE: NonNullable<ClearStorageDataOptions["storages"]> = [
   "serviceworkers",
   "cachestorage",
 ];
+/** ...and of some, by `clearData`, which also reaches an origin embedded in another site's page. */
+const CLEARED_DATA: NonNullable<ClearDataOptions["dataTypes"]> = [
+  "fileSystems",
+  "indexedDB",
+  "localStorage",
+  "serviceWorkers",
+  "cache",
+];
+
+/** How long a page may take to drop its `sessionStorage`: one held by a dialog answers nothing. */
+const SESSION_CLEAR_MS = 2_000;
 
 /** 128 random bits, as the protocol asks of a ref a host mints. */
 const randomId = (bytes = 16) =>
@@ -212,6 +225,11 @@ interface Entry {
   readonly files: string;
   /** The files the server sent for this tab: an upload may give the page these and nothing else. */
   readonly sent: Set<string>;
+  /**
+   * The origins its frames came to since they were last offered to read: an
+   * embedded sign-in's frame may be gone before the tab is looked at again.
+   */
+  readonly visited: Set<string>;
   ended: boolean;
 }
 
@@ -271,29 +289,40 @@ export const makeDesktopBrowser = (options: {
     /** This run of the browser (`browserRun`): a session cookie missing after a restart was lost to it. */
     const browserRun = randomId();
     /**
-     * The shared sign-ins' store's name (`cookieStore`), kept in a file beside
-     * the partition: minted when the file is missing, and again whenever the
-     * store is emptied.
+     * The shared sign-ins' store's name (`cookieStore`), kept in a file in the
+     * partition's own folder, so a partition removed takes its name along:
+     * minted when the file is missing, and again before the store is emptied.
+     * Left out of the hello when it cannot be kept: the server then takes the
+     * host as new, and removes nothing it lacks from the others.
      */
-    const storeFile = NodePath.join(app.getPath("userData"), "browser-cookie-store");
-    const mintStore = Effect.try({
-      try: () => {
-        const minted = randomId();
-        NodeFS.writeFileSync(storeFile, minted);
-        return minted;
-      },
-      catch: (cause) => failed("page", `The sign-ins' store was not named: ${String(cause)}`),
-    });
-    let cookieStore = yield* Effect.try({
-      try: () => NodeFS.readFileSync(storeFile, "utf8").trim(),
-      catch: (cause) => failed("page", String(cause)),
-    }).pipe(
-      Effect.filterOrFail(
-        (kept) => kept.length >= 16 && kept.length <= 200,
-        () => failed("page", "The sign-ins' store's name is damaged."),
-      ),
-      Effect.catch(() => mintStore),
-    );
+    const storeFile =
+      shared.storagePath === null ? null : NodePath.join(shared.storagePath, "j3-cookie-store");
+    const mintStore = (file: string) =>
+      Effect.try({
+        try: () => {
+          const minted = randomId();
+          NodeFS.mkdirSync(NodePath.dirname(file), { recursive: true });
+          NodeFS.writeFileSync(file, minted);
+          return minted;
+        },
+        catch: (cause) => failed("page", `The sign-ins' store was not named: ${String(cause)}`),
+      });
+    const unnamed = (error: BrowserHostError) =>
+      Effect.as(Effect.logWarning("The sign-ins' store has no name", error), undefined);
+    let cookieStore: string | undefined =
+      storeFile === null
+        ? undefined
+        : yield* Effect.try({
+            try: () => NodeFS.readFileSync(storeFile, "utf8").trim(),
+            catch: (cause) => failed("page", String(cause)),
+          }).pipe(
+            Effect.filterOrFail(
+              (kept) => kept.length >= 16 && kept.length <= 200,
+              () => failed("page", "The sign-ins' store's name is damaged."),
+            ),
+            Effect.catch(() => mintStore(storeFile)),
+            Effect.catch(unnamed),
+          );
 
     const toServer = yield* PubSub.unbounded<BrowserHostEvent>();
     const toApp = yield* PubSub.unbounded<LocalBrowserEvent>();
@@ -325,12 +354,20 @@ export const makeDesktopBrowser = (options: {
     let known = new Map<string, BrowserCookie>(
       (yield* signIns.readCookies).map((cookie) => [cookieId(keyOfCookie(cookie)), cookie]),
     );
+    // A look at the jar and a write the server asks for take turns: a look between a write's
+    // `known` and its landing would tell its cookies as removed, then the write itself as new.
+    const cookiesLock = yield* Semaphore.make(1);
     let gathering: Fiber.Fiber<void, BrowserHostError> | undefined;
     const sendCookieChanges = Effect.gen(function* () {
       yield* Effect.sleep(COOKIE_BATCH_MS);
       gathering = undefined;
-      const changes = cookieChanges(known, yield* signIns.readCookies);
-      known = withCookieChanges(known, changes);
+      const changes = yield* cookiesLock.withPermits(1)(
+        Effect.gen(function* () {
+          const found = cookieChanges(known, yield* signIns.readCookies);
+          known = withCookieChanges(known, found);
+          return found;
+        }),
+      );
       if (changes.set.length > 0 || changes.removed.length > 0) {
         yield* tell({ type: "cookies.changed", changes });
       }
@@ -350,25 +387,30 @@ export const makeDesktopBrowser = (options: {
       const named = [...new Set(origins.filter((origin) => origin !== null))];
       return named.length === 0 ? Effect.void : tell({ type: "storage.changed", origins: named });
     };
+    /**
+     * The origins `contents`' frames show now, by each frame's own origin: one
+     * on `about:blank` or `srcdoc` has its maker's.
+     */
+    const showing = (contents: WebContents) =>
+      contents.isDestroyed()
+        ? []
+        : contents.mainFrame.framesInSubtree.map((frame) => originOf(frame.origin));
     /** Whether a frame of a shared tab shows `origin`: a page of it may hold its databases open. */
     const sharedShows = (origin: string) =>
       [...entries.values()].some(
-        (entry) =>
-          !entry.tab.private &&
-          !entry.tab.contents.isDestroyed() &&
-          entry.tab.contents.mainFrame.framesInSubtree.some(
-            (frame) => originOf(frame.url) === origin,
-          ),
+        (entry) => !entry.tab.private && showing(entry.tab.contents).includes(origin),
       );
-    /** The origins of every frame of `contents`: a sign-in may be kept by an embedded one's. */
-    const framesOrigins = (contents: WebContents) =>
-      contents.isDestroyed()
-        ? []
-        : contents.mainFrame.framesInSubtree.map((frame) => originOf(frame.url));
+    /**
+     * The origins of every frame of a shared tab, now and since they were
+     * last offered: a sign-in may be kept by an embedded one's.
+     */
+    const framesOrigins = (entry: Entry) => {
+      const origins = [...showing(entry.tab.contents), ...entry.visited];
+      entry.visited.clear();
+      return origins;
+    };
     const sharedOrigins = () =>
-      [...entries.values()]
-        .filter((entry) => !entry.tab.private)
-        .flatMap((entry) => framesOrigins(entry.tab.contents));
+      [...entries.values()].filter((entry) => !entry.tab.private).flatMap(framesOrigins);
     yield* Effect.forkScoped(
       Effect.forever(
         Effect.andThen(
@@ -517,7 +559,7 @@ export const makeDesktopBrowser = (options: {
       entries.delete(entry.tab.ref);
       drivers.delete(entry.tab.ref);
       const { contents } = entry.tab;
-      if (!entry.tab.private) yield* tellStorage(framesOrigins(contents));
+      if (!entry.tab.private) yield* tellStorage(framesOrigins(entry));
       yield* Scope.close(entry.scope, Exit.void);
       const home = homes.get(entry.tab.view);
       homes.delete(entry.tab.view);
@@ -582,6 +624,7 @@ export const makeDesktopBrowser = (options: {
           reported: input.reported,
           files,
           sent: new Set(),
+          visited: new Set(),
           ended: false,
         };
         current = entry;
@@ -616,9 +659,13 @@ export const makeDesktopBrowser = (options: {
           // The page it leaves, with its frames, before they go.
           if (details.isMainFrame && !details.isSameDocument && !tab.private) {
             const going = originOf(details.url);
-            const leaving = framesOrigins(contents).filter((origin) => origin !== going);
+            const leaving = framesOrigins(entry).filter((origin) => origin !== going);
             if (leaving.length > 0) run(tellStorage(leaving));
           }
+        });
+        contents.on("did-frame-navigate", (_event, url) => {
+          const origin = originOf(url);
+          if (!tab.private && origin !== null) entry.visited.add(origin);
         });
         contents.on("render-process-gone", () => run(ended(entry, true)));
         contents.once("destroyed", () => run(ended(entry, false)));
@@ -718,7 +765,7 @@ export const makeDesktopBrowser = (options: {
             privateTabs: true,
             nativeView: true,
           },
-          cookieStore,
+          ...(cookieStore === undefined ? {} : { cookieStore }),
           browserRun,
           tabs,
           ...(privateTabs.length === 0 ? {} : { privateTabs }),
@@ -852,11 +899,21 @@ export const makeDesktopBrowser = (options: {
         }),
       readCookies: Effect.map(signIns.readCookies, (cookies) => ({ cookies })),
       writeCookies: (changes) =>
-        Effect.suspend(() => {
-          // Known first: the writes' own `changed` events then find nothing new.
-          known = withCookieChanges(known, changes);
-          return signIns.writeCookies(changes);
-        }),
+        cookiesLock.withPermits(1)(
+          Effect.suspend(() => {
+            // Known first: the writes' own `changed` events then find nothing new. A write that
+            // fails is known no more, so no look takes its cookies for ones the site removed.
+            const before = known;
+            known = withCookieChanges(known, changes);
+            return signIns.writeCookies(changes).pipe(
+              Effect.onError(() =>
+                Effect.sync(() => {
+                  known = before;
+                }),
+              ),
+            );
+          }),
+        ),
       readStorage: ({ origins, indexedDb }) =>
         Effect.map(signIns.readStorage(origins, indexedDb), (read) => ({ origins: read })),
       writeStorage: (origins) => signIns.writeStorage(origins, sharedShows),
@@ -866,26 +923,27 @@ export const makeDesktopBrowser = (options: {
           const origin = originOf(url);
           return origin !== null && (cleared === null || cleared.has(origin));
         };
-        // The site data of the store itself, then what open tabs of them keep in their memory.
-        for (const origin of cleared ?? [null]) {
-          yield* Effect.tryPromise({
-            try: () =>
-              shared.clearStorageData(
-                origin === null
-                  ? { storages: CLEARED_STORAGE }
-                  : { origin, storages: CLEARED_STORAGE },
-              ),
-            catch: (cause) => failed("page", `Site data was not cleared: ${String(cause)}`),
-          });
-        }
+        // The site data of the store itself, an origin's in every site's pages it is embedded
+        // in too, then what open tabs of them keep in their memory.
+        yield* Effect.tryPromise({
+          try: () =>
+            cleared === null
+              ? shared.clearStorageData({ storages: CLEARED_STORAGE })
+              : shared.clearData({
+                  dataTypes: CLEARED_DATA,
+                  origins: [...cleared],
+                  originMatchingMode: "origin-in-all-contexts",
+                }),
+          catch: (cause) => failed("page", `Site data was not cleared: ${String(cause)}`),
+        });
         for (const entry of entries.values()) {
           const { contents } = entry.tab;
           if (entry.tab.private || contents.isDestroyed()) continue;
           for (const frame of contents.mainFrame.framesInSubtree) {
-            if (!ofThem(frame.url)) continue;
+            if (!ofThem(frame.origin)) continue;
             yield* Effect.promise(() =>
               frame.executeJavaScript("sessionStorage.clear()").catch(() => undefined),
-            );
+            ).pipe(Effect.timeoutOption(SESSION_CLEAR_MS));
           }
           if (ofThem(contents.getURL())) contents.reload();
         }
@@ -969,15 +1027,32 @@ export const makeDesktopBrowser = (options: {
           entry?.tab.personUsed();
           return entry?.reported === true ? tell({ type: "person.input", tab: ref }) : Effect.void;
         }),
-      forgetSignIns: Effect.gen(function* () {
-        yield* Effect.promise(() => shared.clearData().catch(() => undefined));
-        known = new Map();
-        // Emptied: another store, as far as the server can tell.
-        cookieStore = yield* mintStore.pipe(
-          Effect.catch((error) =>
-            Effect.as(Effect.logWarning("The sign-ins' store was not named", error), cookieStore),
-          ),
-        );
-      }),
+      forgetSignIns: cookiesLock.withPermits(1)(
+        Effect.gen(function* () {
+          // Named anew before it is emptied, so no hello names an emptied store by its old
+          // name: a host stopped in between only seems new. With no new name, no name at all.
+          cookieStore = undefined;
+          if (storeFile !== null) {
+            cookieStore = yield* mintStore(storeFile).pipe(
+              Effect.catch((error) =>
+                Effect.try({
+                  try: () => NodeFS.rmSync(storeFile, { force: true }),
+                  catch: (cause) => failed("page", String(cause)),
+                }).pipe(
+                  Effect.catch((kept) =>
+                    Effect.logError("The sign-ins' store keeps its old name", kept),
+                  ),
+                  Effect.andThen(unnamed(error)),
+                ),
+              ),
+            );
+          }
+          yield* Effect.tryPromise({
+            try: () => shared.clearData(),
+            catch: (cause) => failed("page", `The sign-ins were not cleared: ${String(cause)}`),
+          }).pipe(Effect.catch((error) => Effect.logError("The sign-ins were not cleared", error)));
+          known = new Map();
+        }),
+      ),
     };
   });
