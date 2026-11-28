@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
+  type BrowserSignIns,
+  type BrowserSite,
   type ModelChoice,
   type NotificationSettingsChange,
   type Settings as SettingsValue,
@@ -11,12 +13,21 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { Connection, type J3RpcClient, type NotPaired } from "../connection/Connection.ts";
 import { DeviceTimeZone } from "../ports.ts";
 import { Actions, intentResult, type IntentResult } from "../intents/Actions.ts";
 import { Cell, type Readable } from "../Store.ts";
+import { makeKeyed } from "./keyed.ts";
 import { loading, markStale, ready, type Synced } from "./synced.ts";
+
+/**
+ * The sites the person is signed in to in J3 Bots' browser, as Settings
+ * shows them; `unsupported` on a server older than the list, which shows
+ * none.
+ */
+export type SignInsState = Synced<BrowserSignIns> | { readonly _tag: "unsupported" };
 
 /** What the profile in Settings changes. Fields left out keep their value. */
 export type ProfileChanges = Partial<Pick<SettingsValue, "operatorName" | "timeZone">>;
@@ -105,7 +116,14 @@ export class Settings extends Context.Service<
     readonly update: (change: SettingsChange) => Effect.Effect<IntentResult<SettingsValue>>;
     /** Reads them again, as when Settings opens, for a change another device made meanwhile. */
     readonly refresh: Effect.Effect<void, NotPaired>;
-    /** Signs the bots' browser out of every site; refused while the engine is not running. */
+    /**
+     * The sites the person is signed in to, followed while held: on every
+     * socket, each change as the server tells it.
+     */
+    readonly openSignIns: Effect.Effect<Readable<SignInsState>, never, Scope.Scope>;
+    /** Signs J3 Bots' browser out of one site, everywhere. */
+    readonly signOutSite: (site: BrowserSite) => Effect.Effect<IntentResult<void>>;
+    /** Signs J3 Bots' browser out of every site, everywhere. */
     readonly signOutBrowser: Effect.Effect<IntentResult<void>>;
   }
 >()("@j3-bots/client-runtime/stores/Settings") {}
@@ -136,6 +154,7 @@ export const layer = Layer.effect(
     const connection = yield* Connection;
     const actions = yield* Actions;
     const deviceZone = yield* DeviceTimeZone;
+    const scope = yield* Scope.Scope;
     const state = new Cell<Synced<SettingsValue>>(loading);
     const saves = {
       profile: new Cell<SettingsSaves["profile"]>({ _tag: "idle" }),
@@ -238,10 +257,49 @@ export const layer = Layer.effect(
       }
     });
 
+    const signIns = makeKeyed(
+      scope,
+      () => "signIns",
+      () =>
+        Effect.sync(() => {
+          const signedIn = new Cell<SignInsState>(loading);
+          const run = connection.eachSession((client) =>
+            client["browser.signIns"]().pipe(
+              Stream.runForEach((value) => Effect.sync(() => signedIn.set(ready(value)))),
+              // The list cannot fail on a server that has it: a defect is a
+              // server older than it, which has no list to show.
+              Effect.catchDefect(() => Effect.sync(() => signedIn.set({ _tag: "unsupported" }))),
+              Effect.ensuring(
+                Effect.sync(() =>
+                  signedIn.update((current) =>
+                    current._tag === "unsupported" ? current : markStale(current),
+                  ),
+                ),
+              ),
+            ),
+          );
+          const value: Readable<SignInsState> = signedIn;
+          return { value, run, close: () => {} };
+        }),
+    );
+
+    const signOutSite = (site: BrowserSite) =>
+      connection
+        .call((client) => client["browser.signOutSite"]({ site }))
+        .pipe(Effect.exit, Effect.map(intentResult));
+
     const signOutBrowser = connection
       .call((client) => client["browser.signOut"]())
       .pipe(Effect.exit, Effect.map(intentResult));
 
-    return Settings.of({ state, saves, update, refresh, signOutBrowser });
+    return Settings.of({
+      state,
+      saves,
+      update,
+      refresh,
+      openSignIns: signIns.acquire(undefined),
+      signOutSite,
+      signOutBrowser,
+    });
   }),
 );

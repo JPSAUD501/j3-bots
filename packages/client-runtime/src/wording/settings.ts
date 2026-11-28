@@ -14,6 +14,7 @@ const words: Record<SettingsPage, { readonly title: KeyWith; readonly descriptio
   usage: { title: "settings.usage", description: "settings.usage.description" },
   connectors: { title: "settings.connectors", description: "settings.connectors.description" },
   secrets: { title: "secrets.title", description: "settings.secrets.description" },
+  browser: { title: "settings.siteSignIns", description: "settings.siteSignIns.description" },
   devices: { title: "settings.devices", description: "settings.devices.description" },
   where: { title: "settings.where", description: "settings.where.description" },
   updates: { title: "settings.about", description: "settings.about.description" },

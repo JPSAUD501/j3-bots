@@ -14,7 +14,9 @@ import { providerGate } from "./engine.ts";
  * - `providers`: the engine, each provider, its version and its sign-in;
  * - `usage`: each provider's limits, and the bots that used its turns;
  * - `connectors`: the services bots can use;
- * - `secrets`: the logins and keys bots use, and the bots' browser's sign-ins;
+ * - `secrets`: the logins and keys bots use;
+ * - `browser`: the sites the person is signed in to in J3 Bots' browser,
+ *   which the bots use too, and signing out of them;
  * - `devices`: this device (signing it out, the desktop app's shortcut) and
  *   every paired one, with pairing another;
  * - `where`: where the bots live and moving them, in the desktop app and on
@@ -31,6 +33,7 @@ export type SettingsPage =
   | "usage"
   | "connectors"
   | "secrets"
+  | "browser"
   | "devices"
   | "where"
   | "updates";
@@ -43,7 +46,7 @@ export type SettingsPage =
  */
 export const settingsGroups: ReadonlyArray<ReadonlyArray<SettingsPage>> = [
   ["you", "notifications", "appearance", "voice"],
-  ["providers", "usage", "connectors", "secrets"],
+  ["providers", "usage", "connectors", "secrets", "browser"],
   ["devices", "where", "updates"],
 ];
 

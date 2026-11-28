@@ -22,9 +22,7 @@ import { engineFolders, type PrivateFiles } from "./PrivateFiles.ts";
 
 /**
  * The scopes the adapter needs: read threads and projects, and operate them;
- * clear the engine's own browser profile (`clearBrowserProfile`), which
- * **Assumed** needs `preview:operate`, as the engine's other browser
- * methods do; write the engine's settings, for the switch for suggested
+ * write the engine's settings, for the switch for suggested
  * replies and to clear the browser access older releases wrote
  * (`Settings.ts`); and manage providers, for the operator's update of
  * a harness (`server.updateProvider`) and to replace a provider instance
@@ -37,7 +35,6 @@ import { engineFolders, type PrivateFiles } from "./PrivateFiles.ts";
 const CREDENTIAL_SCOPES = [
   "orchestration:read",
   "orchestration:operate",
-  "preview:operate",
   "settings:write",
   "providers:manage",
 ] as const;

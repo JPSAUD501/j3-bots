@@ -154,6 +154,7 @@ export {
   type SettingsSave,
   type UsageDataChanges,
   type SettingsSaves,
+  type SignInsState,
 } from "./stores/Settings.ts";
 export {
   type AskedValues,

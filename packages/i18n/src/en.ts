@@ -1057,8 +1057,9 @@ export const en = {
     "How close each AI account is to its limit, and which bots used it.",
   "settings.connectors.description":
     "Services your bots can use, such as Notion or GitHub, and the skills they know.",
-  "settings.secrets.description":
-    "The logins and keys your bots use without seeing them, and the sites their browser stays signed in to.",
+  "settings.secrets.description": "The logins and keys your bots use without seeing them.",
+  "settings.siteSignIns.description":
+    "The sites you’re signed in to in J3 Bots’ browser. Your bots use them too.",
   "settings.devices.description": "This device, and every other one paired with your bots.",
   "settings.devices.paired": "Paired devices",
   "settings.thisPhone": "This phone",
@@ -1994,17 +1995,26 @@ export const en = {
   "memory.failedClosed": "Your edit to {file} wasn’t saved. Open it to see why.",
 
   "settings.close": "Close settings",
-  "settings.botBrowser": "Bots’ browser",
-  "settings.botBrowser.hint":
-    "The bots’ browser stays signed in to the sites you signed in to. Signing out signs every bot out.",
-  "settings.botBrowser.signOut": "Sign out of all sites",
-  "settings.botBrowser.signOut.title": "Sign out of all sites?",
-  "settings.botBrowser.signOut.body":
-    "The browser forgets every site you signed in to, and its open tabs close. Bots can’t use those sites again until you sign in again.",
-  "settings.botBrowser.signOut.cancel": "Not now",
-  "settings.botBrowser.signOut.confirm": "Sign out",
-  "settings.botBrowser.signOut.done": "Signed out of all sites.",
-  "settings.botBrowser.signOut.failed": "The browser didn’t sign out. Try again.",
+  "settings.siteSignIns": "Browser",
+  "settings.siteSignIns.sites": "Sites you’re signed in to",
+  "settings.siteSignIns.none":
+    "You haven’t signed in to any site yet. Sign in to one in a browser tab, and your bots can use it too.",
+  "settings.siteSignIns.unreadable":
+    "Your sign-ins can’t be opened, so the browser isn’t sharing them. If the secrets’ key changed or the file was damaged, sign out of all sites to start over.",
+  "settings.siteSignIns.locked":
+    "Your sign-ins stay locked until J3 Bots can read your secrets again, so the browser isn’t sharing them. Secrets says what’s wrong.",
+  "settings.siteSignIns.tooBig": "Too big to carry between browsers",
+  "settings.siteSignIns.signOutSite": "Sign out",
+  "settings.siteSignIns.signOutSite.label": "Sign out of {site}",
+  "settings.siteSignIns.signOutSite.failed": "Didn’t sign out of {site}. Try again.",
+  "settings.siteSignIns.signOut": "Sign out of all sites",
+  "settings.siteSignIns.signOut.title": "Sign out of all sites?",
+  "settings.siteSignIns.signOut.body":
+    "The browser forgets every site you signed in to, here and on every computer. Open tabs stay open, signed out. Your bots can’t use those sites until you sign in again.",
+  "settings.siteSignIns.signOut.cancel": "Not now",
+  "settings.siteSignIns.signOut.confirm": "Sign out",
+  "settings.siteSignIns.signOut.done": "Signed out of all sites.",
+  "settings.siteSignIns.signOut.failed": "The browser didn’t sign out. Try again.",
   "settings.engine.ready": "Running, version {version}",
   "settings.engine.lastKnown": "Last known. This device isn’t connected to J3 Bots right now.",
   "settings.usage": "Usage",

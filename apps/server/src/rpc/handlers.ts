@@ -71,6 +71,7 @@ import { ConnectorInputs } from "../connectors/ConnectorInputs.ts";
 import { Management } from "../tools/Management.ts";
 import { TelemetryClients } from "../telemetry/Clients.ts";
 import { Telemetry } from "../telemetry/Telemetry.ts";
+import { SignIns as BrowserSignIns } from "../browser/signins/SignIns.ts";
 
 const operator = { _tag: "operator" } as const;
 
@@ -107,6 +108,7 @@ export const handlers = J3Rpcs.toLayer(
     const network = yield* Network;
     const { publicOrigin } = yield* ServerConfig;
     const signIns = yield* SignIns;
+    const browserSignIns = yield* BrowserSignIns;
     const harnesses = yield* Harnesses;
     const accounts = yield* ProviderAccounts;
     const { providerHome } = homeLayout(yield* Path.Path, (yield* ServerConfig).home);
@@ -315,11 +317,10 @@ export const handlers = J3Rpcs.toLayer(
       "telemetry.record": ({ event }) =>
         Ref.get(client).pipe(Effect.flatMap((each) => telemetry.record(event, each))),
       "telemetry.sent": () => telemetry.sent,
-      // Clearing again clears nothing more: no receipt.
-      "browser.signOut": () =>
-        engine.clearBrowserProfile.pipe(
-          Effect.mapError(() => new Conflict({ reason: "engine-unavailable" })),
-        ),
+      // Signing out again signs out of nothing more: no receipt.
+      "browser.signOut": () => browserSignIns.signOut,
+      "browser.signIns": () => browserSignIns.view,
+      "browser.signOutSite": ({ site }) => browserSignIns.signOutSite(site),
       "client.view": ({ target }) => viewer.view(target),
       "notifications.subscribe": () => viewer.notifications,
       "devices.list": () => devices.list(device.id),

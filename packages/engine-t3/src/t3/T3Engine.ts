@@ -16,7 +16,6 @@ import {
   ORCHESTRATION_PROTOCOL_HEADER,
   ProjectId,
   ProjectSnapshot,
-  DEFAULT_BROWSER_PROFILE_ID,
   ProviderDriverKind,
   ProviderInstanceId,
   type ProviderOptionSelection,
@@ -1162,29 +1161,6 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     Stream.switchMap((enabled) => Stream.fromEffect(writeSuggestReplies(enabled))),
     Stream.runDrain,
     Effect.forkScoped,
-  );
-
-  /**
-   * The engine closes the profile's browser context, which closes its tabs,
-   * and deletes its folder (**Read** at `bc0f04d`, `ServerBrowserContexts.ts`,
-   * `clearProfile`). A deletion that failed may have deleted part of it:
-   * indeterminate, and clearing again finishes it.
-   */
-  const clearBrowserProfile = ready.pipe(
-    Effect.andThen(
-      rpc["preview.clearProfile"]({ profileId: DEFAULT_BROWSER_PROFILE_ID }).pipe(
-        Effect.timeoutOrElse({
-          duration: COMMAND_TIMEOUT,
-          orElse: () => Effect.fail(new EngineIndeterminate()),
-        }),
-        Effect.catchTags({
-          RpcClientError: () => Effect.fail(new EngineIndeterminate()),
-          EnvironmentAuthorizationError: () => Effect.fail(new EngineUnavailable()),
-          PreviewClearProfileError: () => Effect.fail(new EngineIndeterminate()),
-        }),
-      ),
-    ),
-    Effect.withSpan("Engine.clearBrowserProfile"),
   );
 
   const openSession = Effect.fn("Engine.openSession")(function* (input: {
@@ -2820,7 +2796,6 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     linkBotSkills,
     ensureProject,
     removeProject,
-    clearBrowserProfile,
     openSession,
     configureSession,
     retireSession,

@@ -46,6 +46,7 @@ import * as PubSub from "effect/PubSub";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
+import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { workspaceReader } from "../attachments/workspaceFile.ts";
@@ -55,6 +56,7 @@ import { Devices } from "../devices/Devices.ts";
 import { Ids } from "../Ids.ts";
 import { makeRegistryStore, type StoredTab } from "./registry.ts";
 import { ServerBrowser } from "./server/ServerBrowser.ts";
+import { SignIns, type SignInsAttachment } from "./signins/SignIns.ts";
 import { FillHoldRefused, TabAccess } from "./TabAccess.ts";
 import { type ActRefused, makeTabControl, QUEUE_WAIT, type TabControl } from "./TabControl.ts";
 
@@ -231,10 +233,21 @@ const desktopKey = (device: DeviceId): HostKey => `desktop:${device}`;
 const keyOfHello = (hello: BrowserHostHello): HostKey =>
   hello.host.kind === "server" ? SERVER : desktopKey(hello.host.device);
 
+/** The host events the shared sign-ins follow. */
+const SIGNINS_EVENTS: ReadonlySet<BrowserHostEvent["type"]> = new Set([
+  "tab.opened",
+  "tab.changed",
+  "tab.closed",
+  "cookies.changed",
+  "storage.changed",
+]);
+
 interface Host {
   readonly key: HostKey;
   readonly host: PageHost;
   readonly hello: BrowserHostHello;
+  /** Its sync with the shared sign-ins. */
+  readonly signIns: SignInsAttachment;
   /** When the person last used this desktop, as far as its host says. */
   activeAt: number;
   /** The tab the person has in front of them in this desktop's app. */
@@ -316,6 +329,7 @@ export const layer = Layer.effect(
     const path = yield* Path.Path;
     const readWorkspaceFile = yield* workspaceReader;
     const serverBrowser = yield* ServerBrowser;
+    const signIns = yield* SignIns;
     const serviceScope = yield* Effect.scope;
 
     const tabs = new Map<BrowserTabRef, Tab>();
@@ -732,10 +746,13 @@ export const layer = Layer.effect(
         graces.delete(key);
         yield* Fiber.interrupt(grace);
       }
+      // Its cookies agree with the shared sign-ins before any tab of it is used.
+      const synced = yield* signIns.attach(host, hello);
       const entry: Host = {
         key,
         host,
         hello,
+        signIns: synced,
         activeAt: at,
         focused: null,
         focusedAt: 0,
@@ -772,8 +789,18 @@ export const layer = Layer.effect(
           yield* park(tab);
       yield* bump;
       const ended = yield* Deferred.make<void>();
+      // What the sign-ins take of its events, in order, apart from the
+      // registry's: their writes to other hosts never hold up its tabs.
+      const toSignIns = yield* Queue.unbounded<BrowserHostEvent>();
+      yield* Effect.forkScoped(
+        Effect.forever(Queue.take(toSignIns).pipe(Effect.flatMap(synced.event))),
+      );
       yield* host.events.pipe(
-        Stream.runForEach(onHostEvent(entry)),
+        Stream.runForEach((event) =>
+          (SIGNINS_EVENTS.has(event.type) ? Queue.offer(toSignIns, event) : Effect.void).pipe(
+            Effect.andThen(onHostEvent(entry)(event)),
+          ),
+        ),
         Effect.catchCause((cause) => Effect.logWarning("A browser host's events ended", cause)),
         Effect.ensuring(Deferred.succeed(ended, undefined)),
         // A host whose events end is gone. The server's own is closed too,
@@ -787,6 +814,9 @@ export const layer = Layer.effect(
         ),
         Effect.forkScoped,
       );
+      // First of all, while the host still answers: what it changed since it
+      // was last read goes to the sign-ins.
+      yield* Effect.addFinalizer(() => synced.flush);
       return { ended: Deferred.await(ended) };
     });
 
@@ -887,6 +917,7 @@ export const layer = Layer.effect(
     const reopen = (tab: Tab) =>
       withPlace((target) =>
         Effect.gen(function* () {
+          if (tab.url.length > 0) yield* target.signIns.prepare(tab.url);
           const page = yield* target.host
             .open({
               tab: tab.ref,
@@ -1195,6 +1226,7 @@ export const layer = Layer.effect(
       const { tab, target } = yield* input.target === null
         ? withPlace(register)
         : register(input.target);
+      if (input.url !== undefined) yield* target.signIns.prepare(input.url);
       const open = target.host.open({
         tab: ref,
         ...(input.url === undefined ? {} : { url: input.url }),
@@ -1238,17 +1270,20 @@ export const layer = Layer.effect(
       }),
       navigate: (botId, input) =>
         acting(botId, input.tab, (host, tab) =>
-          host.host
-            .navigate({
-              tab: tab.ref,
-              to:
-                input.url !== undefined
-                  ? { kind: "url", url: input.url }
-                  : { kind: input.go ?? "reload" },
-              ...(input.readiness === undefined ? {} : { readiness: input.readiness }),
-              ...(input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs }),
-            })
-            .pipe(Effect.tap((page) => Effect.sync(() => learnPage(tab, page)))),
+          (input.url === undefined ? Effect.void : host.signIns.prepare(input.url)).pipe(
+            Effect.andThen(
+              host.host.navigate({
+                tab: tab.ref,
+                to:
+                  input.url !== undefined
+                    ? { kind: "url", url: input.url }
+                    : { kind: input.go ?? "reload" },
+                ...(input.readiness === undefined ? {} : { readiness: input.readiness }),
+                ...(input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs }),
+              }),
+            ),
+            Effect.tap((page) => Effect.sync(() => learnPage(tab, page))),
+          ),
         ),
       snapshot: (botId, input) =>
         reading(botId, input.tab, (host, tab) =>

@@ -50,6 +50,8 @@ overrides:
   # PDF.js's canvas for Node, a native binary per platform. The web client
   # draws on the browser's own canvas and never loads it.
   "pdfjs-dist>@napi-rs/canvas": "-"
+  # tldts at the version the server pins, not a newer core.
+  tldts-core: 7.5.0
   # Vite+ ships its own Vite build; every dependency on vite resolves to it.
   vite: npm:@voidzero-dev/vite-plus-core@1.4.0
   vite-plus: "catalog:"

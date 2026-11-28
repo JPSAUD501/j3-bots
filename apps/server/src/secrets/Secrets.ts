@@ -38,6 +38,7 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Reactivity from "effect/reactivity/Reactivity";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
+import type * as Scope from "effect/Scope";
 import { BotStore } from "../bots/BotStore.ts";
 import { removeLeftovers, replaceFileDurably } from "../files.ts";
 import { ServerConfig } from "../config.ts";
@@ -45,7 +46,15 @@ import { HOME_ENTRIES } from "../home/entries.ts";
 import { Layout } from "../Layout.ts";
 import { json, Time, timeText } from "../persistence/columns.ts";
 import { transactional } from "../persistence/transaction.ts";
-import { KEY_BYTES, NONCE_BYTES, openField, type Sealed, sealField } from "./crypto.ts";
+import {
+  deriveSubkey,
+  KEY_BYTES,
+  NONCE_BYTES,
+  openField,
+  type Sealed,
+  sealField,
+  type SubkeyPurpose,
+} from "./crypto.ts";
 import {
   type ConnectorId,
   ConnectorSecret,
@@ -303,6 +312,13 @@ export class Secrets extends Context.Service<
       /** Deletes it. Deleting one already gone succeeds. */
       readonly remove: (id: ConnectorId) => Effect.Effect<void, Conflict>;
     };
+    /**
+     * A key of `purpose`'s own, derived from the data key
+     * (`crypto.ts`, `deriveSubkey`), for state the server seals outside the
+     * secrets. It is zeroed when the scope closes. Fails with the state's
+     * conflict while the secrets cannot be read.
+     */
+    readonly subkey: (purpose: SubkeyPurpose) => Effect.Effect<Buffer, Conflict, Scope.Scope>;
   }
 >()("@j3-bots/server/secrets/Secrets") {}
 
@@ -1269,6 +1285,12 @@ export const layer = Layer.effect(
         }),
       );
 
+    const subkey = (purpose: SubkeyPurpose) =>
+      Effect.acquireRelease(
+        serial(Effect.map(ready, ({ key }) => deriveSubkey(key, purpose))),
+        (derived) => Effect.sync(() => derived.fill(0)),
+      );
+
     return Secrets.of({
       status: SubscriptionRef.changes(state).pipe(
         Stream.map(({ state, revision }): SecretsStatus => ({ state, revision })),
@@ -1291,6 +1313,7 @@ export const layer = Layer.effect(
       filled,
       referenceValues,
       noteUse: noteUses,
+      subkey,
       connectorSecrets: {
         get: connectorSecret,
         put: putConnectorSecret,

@@ -44,10 +44,13 @@ The owner wants a browser that is well made and works with real sites, for bots 
 
 ### Sign-ins
 
-- **One jar, on the server.** It holds cookies, `localStorage` and the `IndexedDB` of the sites that need it. It is sealed under the vault's data key, as secrets are.
-- **Every host shares it.** Each desktop sends its changes as they happen and receives the others'. The server's browser starts from the jar each time, with no profile on disk.
+- **One jar, on the server.** It holds cookies, `localStorage` and, within limits, `IndexedDB`. It is sealed under a key derived from the vault's data key, so it opens with the secrets and with nothing else, and names no site on disk.
+- **Every host shares it.** Each desktop sends its changes as they happen and receives the others'. The server's browser starts from the jar each time, with no profile on disk. A host that comes back is agreed with the jar from what both held when they last agreed, so neither side's changes meanwhile are lost.
 - **Session cookies are kept.** A host that restarts or closes when idle is no reason to sign out.
+- **Signing out wins.** The person signs out of one site or of all, everywhere at once: its cookies are removed and what its pages stored is cleared. A host that was away is signed out before anything it holds is taken back, and a cookie removed is not brought back by one that still held it.
+- **Today's sign-ins move once.** A copy of the engine's profile is read once, on the server, with no request leaving the machine, and what it holds goes into the jar. The profile is then deleted.
 - **The desktop encrypts its cookies** on disk, with Electron's `EnableCookieEncryption` fuse.
+- **IndexedDB is carried within limits.** The jar keeps the databases of every origin a shared tab showed, never a private tab's, and of those moved from the engine's profile: at most 5 MiB per origin, encoded, and 64 MiB for the whole jar. An origin over its limit keeps no databases in the jar; its cookies and `localStorage` still sync, and Settings → Browser marks its site as too big to carry between browsers. A sign-in kept in IndexedDB alone, as Firebase's is, then survives a move between browsers.
 - Importing sign-ins from the person's own Chrome or Firefox comes later.
 
 ### What comes from T3 Code
@@ -63,7 +66,7 @@ The page hardening and the import of sign-ins follow in later work.
 
 ### What the engine keeps
 
-Provisioning sets the engine's `enableAgentBrowserAccess` to `false`, whose default is on (**Read** at `bc0f04d`), and the adapter removes the per-project access earlier releases turned on. Claude Code gets the engine's browser tools removed from its tool list (**Verified**, 2026-11); Codex, which takes no such list, still lists them, and the engine refuses every call (**Read** at `bc0f04d`; a real-engine conformance case checks the refusal). The details are in [Engine: the bot's browser](../architecture/engine.md#the-bots-browser). The adapter keeps one browser call, the deletion of the engine's old profile, for the sign-ins made there before 0.16. The rest of its browser code is gone: only `packages/engine-t3` ever knew it, and J3 Bots' browser knows nothing of T3 Code.
+Provisioning sets the engine's `enableAgentBrowserAccess` to `false`, whose default is on (**Read** at `bc0f04d`), and the adapter removes the per-project access earlier releases turned on. Claude Code gets the engine's browser tools removed from its tool list (**Verified**, 2026-11); Codex, which takes no such list, still lists them, and the engine refuses every call (**Read** at `bc0f04d`; a real-engine conformance case checks the refusal). The details are in [Engine: the bot's browser](../architecture/engine.md#the-bots-browser). The adapter keeps no browser call: after the sign-ins made there before 0.16 move into the jar, it deletes the engine's old profile and the browser the engine downloaded as files. The rest of its browser code is gone: only `packages/engine-t3` ever knew it, and J3 Bots' browser knows nothing of T3 Code.
 
 ## Consequences
 

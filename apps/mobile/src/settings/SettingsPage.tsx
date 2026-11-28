@@ -18,7 +18,7 @@ import type { Screens } from "../navigation.tsx";
 import { SecretsSection } from "../secrets/SecretsSection.tsx";
 import { Text } from "../text.tsx";
 import { AboutSection } from "./About.tsx";
-import { BotBrowserSection } from "./BotBrowser.tsx";
+import { BrowserSection } from "./BrowserSettings.tsx";
 import { DevicesSection } from "./Devices.tsx";
 import { usePhoneNotifications } from "./phoneNotifications.ts";
 import { NotificationsSection, YouSection } from "./Profile.tsx";
@@ -82,12 +82,9 @@ function PageBody({ page }: { readonly page: SettingsPage }) {
     case "connectors":
       return <ConnectorsSection />;
     case "secrets":
-      return (
-        <>
-          <SecretsSection />
-          <BotBrowserSection connected={connected} />
-        </>
-      );
+      return <SecretsSection />;
+    case "browser":
+      return <BrowserSection connected={connected} />;
     case "devices":
       return (
         <>
