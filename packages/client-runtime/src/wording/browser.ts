@@ -1,18 +1,78 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { BotId } from "@j3-bots/contracts";
 import type { I18n } from "@j3-bots/i18n";
-import { type IntentFailure, refusedWith } from "../intents/Actions.ts";
-import type { TabLine } from "../presentation/browserTabs.ts";
+import type { IntentFailure } from "../intents/Actions.ts";
+import type { Frozen, TabLine } from "../presentation/browserTabs.ts";
+import type { BrowserRefusal } from "../stores/Browser.ts";
 
 /**
- * Why a new tab did not open: no browser can open one now, when no J3 Bots
- * app is open on a computer and the server's own cannot run, or any other
- * failure.
+ * Why a new tab did not open, and what the person can do about it, where
+ * there is something: no browser can open one now, the server's is full,
+ * the page did not load or was refused, or any other failure.
  */
-export const tabOpenFailed = (failure: IntentFailure, { t }: I18n): string =>
-  refusedWith(failure, "browser-unavailable")
-    ? t("browser.grid.openUnavailable")
-    : t("browser.grid.openFailed");
+export const tabOpenFailed = (failure: IntentFailure, { t }: I18n): string => {
+  if (failure._tag !== "refused" || failure.error._tag !== "Conflict") {
+    return t("browser.grid.openFailed");
+  }
+  switch (failure.error.reason) {
+    case "browser-unavailable":
+      return t("browser.grid.openUnavailable");
+    case "browser-app-only":
+      return t("browser.grid.openAppOnly");
+    case "browser-full":
+      return t("browser.grid.openFull");
+    case "browser-page-timeout":
+      return t("browser.grid.openTimeout");
+    case "browser-page-failed":
+      return t("browser.grid.openPageFailed");
+    case "browser-address-refused":
+      return t("browser.grid.openRefused");
+    default:
+      return t("browser.grid.openFailed");
+  }
+};
+
+/**
+ * The live view's one quiet line: the tab's own line while the page is
+ * live, else why it is frozen. Input the server just refused says it was not
+ * sent, and why, in the same line. `computer` names the computer the tab runs
+ * on, null when this device does not know its name.
+ */
+export const liveLine = (
+  input: {
+    readonly frozen: Frozen;
+    readonly line: string;
+    readonly refused: BrowserRefusal["reason"] | null;
+    readonly computer: string | null;
+  },
+  { t }: I18n,
+): string => {
+  const { frozen, line, refused, computer } = input;
+  // No connection says it all: a refusal heard before it is stale.
+  if (frozen._tag === "you-offline") return t("browser.line.noConnection");
+  switch (refused) {
+    case "away":
+      return computer === null
+        ? t("browser.line.notSent.awayUnnamed")
+        : t("browser.line.notSent.away", { computer });
+    case "parked":
+      return t("browser.line.notSent.parked");
+    case null:
+      break;
+  }
+  switch (frozen._tag) {
+    case "live":
+      return line;
+    case "reconnecting":
+      return t("browser.reconnecting");
+    case "parked":
+      return t("browser.line.parked");
+    case "away":
+      return computer === null
+        ? t("browser.line.awayUnnamed")
+        : t("browser.line.away", { computer });
+  }
+};
 
 /** The words of a tab's line, and the one thing it offers, if any. */
 export interface TabLineWords {

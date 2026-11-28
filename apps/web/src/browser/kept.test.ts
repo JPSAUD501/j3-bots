@@ -25,6 +25,7 @@ const socket = (controller: BrowserController) => {
     picture: new Cell(null),
     probe: new Cell(null),
     cursor: new Cell(null),
+    refused: new Cell(null),
     onProbe: () => () => {},
     onCursor: () => () => {},
     ack: () => {},

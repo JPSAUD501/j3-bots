@@ -8,11 +8,13 @@ import {
   type BrowserTabHolder,
   type BrowserTabRef,
   type BrowserTabWhere,
+  type Device,
   type DeviceId,
   type SharedBrowserTab,
 } from "@j3-bots/contracts";
 import * as DateTime from "effect/DateTime";
 import type { IntentResult } from "../intents/Actions.ts";
+import type { Synced } from "../stores/synced.ts";
 
 // A tab as the phone and the web show it (browser-ux-v2, section 4): the
 // faces of the bots on it, the one quiet line that says who acts and who
@@ -369,6 +371,12 @@ export type Frozen =
    * or the server restarted. The next bot to use it opens it again.
    */
   | { readonly _tag: "parked" }
+  /**
+   * The computer that runs the tab (`tabComputer`) disconnected a moment
+   * ago: the page stops on its last picture and takes no input. Back within
+   * the server's grace, it goes on; else the tab is parked.
+   */
+  | { readonly _tag: "away" }
   /** The view lost its socket and is opening another. */
   | { readonly _tag: "reconnecting" };
 
@@ -380,13 +388,28 @@ export const closeFailed = (result: IntentResult): boolean =>
   result._tag === "failed" &&
   !(result.failure._tag === "refused" && result.failure.error._tag === "NotFound");
 
+/**
+ * The name of the computer whose J3 Bots app runs the tab; null when none
+ * does, and while this device does not know its name.
+ */
+export const tabComputerName = (
+  tab: ViewerTab | null,
+  devices: Synced<ReadonlyArray<Device>>,
+): string | null => {
+  const where = tab?.where;
+  if (where?.kind !== "desktop" || devices._tag !== "ready") return null;
+  return devices.value.find((device) => device.id === where.device)?.name ?? null;
+};
+
 export const frozenOf = (input: {
   readonly tab: ViewerTab | null;
   readonly online: boolean;
   readonly status: "connecting" | "live" | "reconnecting" | "paused" | "ended";
 }): Frozen => {
   if (!input.online) return { _tag: "you-offline" };
-  if (input.tab?.where?.kind === "parked") return { _tag: "parked" };
+  const where = input.tab?.where;
+  if (where?.kind === "parked") return { _tag: "parked" };
+  if (where?.kind === "desktop" && where.away === true) return { _tag: "away" };
   if (input.status === "reconnecting") return { _tag: "reconnecting" };
   return { _tag: "live" };
 };

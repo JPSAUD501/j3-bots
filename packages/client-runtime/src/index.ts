@@ -234,6 +234,7 @@ export {
   type BrowserCursor,
   type BrowserPicture,
   type BrowserProbe,
+  type BrowserRefusal,
   type BrowserView,
   type BrowserViewSize,
   type BrowserViewState,

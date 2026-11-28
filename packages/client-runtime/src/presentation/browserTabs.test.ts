@@ -215,6 +215,16 @@ describe("a frozen picture", () => {
     );
     expect(frozenOf({ tab: viewerTab(), online: true, status: "live" })._tag).toBe("live");
   });
+
+  it("says the tab's computer disconnected while it may still come back", () => {
+    const device = DeviceId.make("laptop");
+    const away = viewerTab({ where: { kind: "desktop", device, away: true } });
+    expect(frozenOf({ tab: away, online: true, status: "live" })._tag).toBe("away");
+    expect(frozenOf({ tab: away, online: true, status: "reconnecting" })._tag).toBe("away");
+    expect(frozenOf({ tab: away, online: false, status: "live" })._tag).toBe("you-offline");
+    const back = viewerTab({ where: { kind: "desktop", device } });
+    expect(frozenOf({ tab: back, online: true, status: "live" })._tag).toBe("live");
+  });
 });
 
 describe("what the person's use of a page sends", () => {

@@ -12,17 +12,20 @@ import {
   type ShownTab,
   shownTab,
   siteOf,
+  tabComputerName,
   tabFaces,
   type ViewerTab,
 } from "@j3-bots/client-runtime/presentation";
 import {
   type PageUseHandle,
   useBrowserView,
+  useDevices,
   useJ3Client,
   usePageUse,
   useReadable,
+  useRefusedInput,
 } from "@j3-bots/client-runtime/react";
-import { botNames, tabLineWords, tabOpenFailed } from "@j3-bots/client-runtime/wording";
+import { botNames, liveLine, tabLineWords, tabOpenFailed } from "@j3-bots/client-runtime/wording";
 import type { BotId, BrowserTabRef } from "@j3-bots/contracts";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import * as DateTime from "effect/DateTime";
@@ -251,10 +254,13 @@ function TabLive({
   const use = usePageUse({ tab, send: view?.send ?? null, shared });
   const online = useOnline();
   const frozen = frozenOf({ tab, online, status: liveness(state) });
+  const refused = useRefusedInput(view?.refused ?? null);
+  const computer = tabComputerName(tab, useDevices());
   const status = state?.status._tag;
+  // While the tab's computer is away, the page stays on its last picture.
   const showsPage =
     view !== null &&
-    frozen._tag === "live" &&
+    (frozen._tag === "live" || frozen._tag === "away") &&
     (status === "live" || status === "reconnecting" || status === "paused");
 
   // Leaving, or going to another tab, gives what this device holds back at once.
@@ -336,7 +342,7 @@ function TabLive({
       use={use}
       frozen={frozen}
       faces={tab === null ? [] : tabFaces(tab, waitsForPerson)}
-      text={frozenLine(frozen, words.text, t)}
+      text={liveLine({ frozen, line: words.text, refused, computer }, ctx.i18n)}
       action={frozen._tag === "live" ? words.action : null}
       tabs={tabs}
       shown={tab?.ref ?? null}
@@ -471,20 +477,6 @@ function TabLive({
     </KeyboardAvoidingView>
   );
 }
-
-/** The line's words while the page is frozen: no connection says it all, and offers nothing. */
-const frozenLine = (frozen: Frozen, line: string, t: ReturnType<typeof useI18n>["t"]): string => {
-  switch (frozen._tag) {
-    case "live":
-      return line;
-    case "reconnecting":
-      return t("browser.reconnecting");
-    case "you-offline":
-      return t("browser.line.noConnection");
-    case "parked":
-      return t("browser.line.parked");
-  }
-};
 
 /**
  * The site, alone above the page, which only informs. Pulled down, it closes
@@ -792,7 +784,7 @@ function InPlace({
       />
     );
   if (frozen._tag === "parked" || frozen._tag === "you-offline") {
-    const away = frozen._tag === "parked";
+    const parked = frozen._tag === "parked";
     return (
       <>
         {still}
@@ -803,11 +795,11 @@ function InPlace({
             style={{ elevation: OVERLAY_ELEVATION }}
           >
             <Text accessibilityRole="header" className="text-base font-medium text-foreground">
-              {t(away ? "browser.frozen.parked.title" : "browser.frozen.youOffline.title")}
+              {t(parked ? "browser.frozen.parked.title" : "browser.frozen.youOffline.title")}
             </Text>
             {time !== null && (
               <Text className="text-sm text-muted-foreground">
-                {t(away ? "browser.frozen.parked.body" : "browser.frozen.youOffline.body", {
+                {t(parked ? "browser.frozen.parked.body" : "browser.frozen.youOffline.body", {
                   time,
                 })}
               </Text>

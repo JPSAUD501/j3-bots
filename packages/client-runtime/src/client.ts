@@ -370,6 +370,8 @@ export interface BrowserViewHandle {
   readonly picture: Readable<Browser.BrowserPicture | null>;
   readonly probe: Readable<Browser.BrowserProbe | null>;
   readonly cursor: Readable<Browser.BrowserCursor | null>;
+  /** The newest input the server refused, as the tab runs in no browser now. */
+  readonly refused: Readable<Browser.BrowserRefusal | null>;
   /** Calls `listener` with each answer to a `probe`. Returns the function that stops it. */
   readonly onProbe: (listener: (probe: Browser.BrowserProbe) => void) => () => void;
   /** Calls `listener` with each move and click of the bot's pointer. Returns the function that stops it. */
@@ -1332,6 +1334,7 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
         picture: value.picture,
         probe: value.probe,
         cursor: value.cursor,
+        refused: value.refused,
         onProbe: (listener) => each(value.probe, listener),
         onCursor: (listener) => each(value.cursor, listener),
         ack: (sequence) => fire(value.ack(sequence)),

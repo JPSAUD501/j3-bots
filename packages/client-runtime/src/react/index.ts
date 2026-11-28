@@ -337,6 +337,7 @@ export {
 } from "./connectorSignIn.ts";
 export { useTurnAnnouncement } from "./turn.ts";
 export { type PageUseHandle, usePageUse } from "./pageUse.ts";
+export { useRefusedInput } from "./refusedInput.ts";
 export { type Answer, useAnswer } from "./answer.ts";
 export {
   type QuickMessageState,

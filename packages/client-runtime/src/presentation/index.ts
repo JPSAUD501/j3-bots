@@ -150,6 +150,7 @@ export {
   pageUseStep,
   sharedViewerTab,
   tabAfterClose,
+  tabComputerName,
   tabFaces,
   type TabHolder,
   type TabLine,
