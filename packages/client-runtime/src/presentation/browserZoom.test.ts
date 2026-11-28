@@ -6,22 +6,46 @@ import {
   drawnRect,
   fitted,
   followedView,
-  glidedBetween,
   keptInSight,
   keptInView,
   NO_ZOOM,
   pinched,
   readingScale,
   restingZoom,
+  movedBetween,
   seenPart,
+  viewResponseFor,
   zoomedAbout,
   zoomOn,
 } from "./browserZoom.ts";
+import { pointerBounds, restingAt, startMove, stepPointer } from "./pointerMotion.ts";
 
 // A 1280×800 page on a phone 400 points wide, with 600 points for the picture.
 const view = { width: 400, height: 600 };
 const page = { width: 1280, height: 800 };
 const picture = fitted(view, page);
+
+/** How long, in seconds, a pointer's move answering in `response` takes to arrive, stepped at 60 Hz. */
+const stepUntilArrived = (response: number): number => {
+  const frame = 1 / 60;
+  let motion = startMove(
+    restingAt({ x: 100, y: 100 }),
+    { x: 500, y: 100 },
+    response,
+    pointerBounds(page),
+  );
+  for (let frames = 1; frames < 600; frames += 1) {
+    const step = stepPointer(motion, frame, {
+      thinking: false,
+      driftBudget: 0,
+      lean: true,
+      reduced: false,
+    });
+    if (step.arrived) return frames * frame;
+    motion = step.motion;
+  }
+  return Number.POSITIVE_INFINITY;
+};
 
 describe("the viewer's zoom", () => {
   it("rests a desktop page filling the phone's height, from its top-left", () => {
@@ -135,18 +159,19 @@ describe("following a bot", () => {
     expect(followedView(first, null, page, picture, view)).toEqual(first);
   });
 
-  it("glides toward the bot on the pointer's curve instead of jumping, and arrives", () => {
+  it("moves toward the bot on the pointer's spring instead of jumping, and arrives with it", () => {
     const to = { scale: 2.4, x: -400, y: 0 };
     const from = { scale: 2.4, x: 0, y: 0 };
-    const early = glidedBetween(from, to, 150, 600);
-    const late = glidedBetween(from, to, 450, 600);
+    const response = viewResponseFor(from, to, view);
+    const early = movedBetween(from, to, 150, response);
+    const late = movedBetween(from, to, 450, response);
     expect(early.x).toBeLessThan(0);
-    // The glide eases out: most of the way is covered early.
-    expect(early.x).toBeLessThan(-200);
     expect(late.x).toBeLessThan(early.x);
     expect(late.x).toBeGreaterThan(-400);
-    expect(glidedBetween(from, to, 600, 600)).toEqual(to);
-    expect(glidedBetween(from, to, 0, 0)).toEqual(to);
+    // The pointer's move of that length arrives at the same moment.
+    const pointer = stepUntilArrived(response);
+    expect(movedBetween(from, to, pointer * 1000 - 20, response)).not.toEqual(to);
+    expect(movedBetween(from, to, pointer * 1000 + 20, response)).toEqual(to);
   });
 
   it("shows on the little map which part of the page is in view", () => {

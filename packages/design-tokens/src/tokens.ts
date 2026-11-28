@@ -273,25 +273,7 @@ export const motion = {
    * leaves upward as the new one rises in.
    */
   swap: 260,
-  /**
-   * A bot's pointer gliding to where it points next, on `eases.glide`: this
-   * long across half the picture or more, shorter for a shorter move (`glideFor`).
-   */
-  glide: 600,
-  /** The shortest glide, for the smallest move. */
-  glideShortest: 250,
 } as const;
-
-/**
- * How long a bot's pointer glides to its next spot, in ms. `share` is the
- * move's length as a share of the picture's diagonal. Short moves take less
- * time, so the pointer keeps up with a bot working in one place.
- */
-export const glideFor = (share: number): number =>
-  Math.round(
-    motion.glideShortest +
-      (motion.glide - motion.glideShortest) * Math.sqrt(Math.min(1, Math.max(0, share) / 0.5)),
-  );
 
 /**
  * When a bot's card comes and goes under a pointer (decision 0102), in ms.

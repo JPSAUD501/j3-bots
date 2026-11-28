@@ -242,7 +242,7 @@ import {
 import { BotCard, QuickMessageField } from "../components/BotCard";
 import { DesktopBrowser } from "../browser/desktop/DesktopBrowser";
 import { BrowserHelpCard } from "../components/BrowserHelpCard";
-import { BotCursor } from "../browser/BotCursor";
+import { PointerStage } from "./PointerStage";
 import { Faces } from "../browser/Faces";
 import { QuietLine } from "../browser/QuietLine";
 import type { TabLine } from "@j3-bots/client-runtime/presentation";
@@ -2270,18 +2270,8 @@ function BrowserLineSection() {
         </div>
       </Labeled>
       {scout !== undefined && wren !== undefined && (
-        <Labeled label="Each bot's own pointer: an arrow in its color that never turns, with a tag of its face and name while it moves or clicks; thinking, it bobs; while the person holds the tab it steps aside, faded, its tag open">
-          <div className="relative h-44 max-w-xl overflow-hidden rounded-lg border border-border bg-background">
-            <BotCursor bot={scout} at={{ x: 0.12, y: 0.2 }} clicked={null} tagged />
-            <BotCursor
-              bot={wren}
-              at={{ x: 0.55, y: 0.25 }}
-              clicked={null}
-              tagged={false}
-              thinking
-            />
-            <BotCursor bot={scout} at={{ x: 0.3, y: 0.5 }} clicked={null} tagged={false} held />
-          </div>
+        <Labeled label="Each bot's own pointer: an arrow in its color that leans into a move on its tip and stands upright at rest, with a tag of its face and name while it moves or clicks. A click plays as it lands; thinking, it drifts in a small figure eight; a tag flips away from the page's edge and from another bot's; a bot new to the tab comes in from behind its arrow; while the person holds the tab both move aside, faded, their tags open">
+          <PointerStage bots={[scout, wren]} />
         </Labeled>
       )}
     </Section>

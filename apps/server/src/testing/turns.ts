@@ -331,6 +331,22 @@ export const finishRunning = (botId: BotId, previous: TurnId | null = null) =>
 export const turnEnded = (botId: BotId) =>
   until(admittedTurn(botId).pipe(Effect.map(Option.isNone)));
 
+/**
+ * The bot's turn under way, or the next one, ends without a word, as a new
+ * bot's first does, and the server saw it end: the bot is idle.
+ */
+export const turnFinishes = (botId: BotId) =>
+  Effect.gen(function* () {
+    const session = yield* engineSession(botId);
+    const turnId = yield* nextTurn(botId);
+    yield* (yield* TestEngineControl).finishTurn({
+      sessionId: session,
+      turnId,
+      outcome: { _tag: "completed" },
+    });
+    yield* turnEnded(botId);
+  });
+
 /** The operator writes to the bot in its conversation. */
 export const sendToBot = (botId: BotId, text: string) =>
   Effect.gen(function* () {

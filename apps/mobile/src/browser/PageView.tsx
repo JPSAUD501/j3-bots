@@ -3,7 +3,7 @@ import type { BrowserPicture, BrowserProbe, BrowserViewHandle } from "@j3-bots/c
 import {
   drawnRect,
   followedView,
-  glidedBetween,
+  movedBetween,
   fitted,
   keptInView,
   LONG_PRESS_MS,
@@ -22,7 +22,7 @@ import {
   touchLifted,
   touchMoved,
   touchStarted,
-  viewGlideFor,
+  viewResponseFor,
   type Zoom,
   zoomOn,
 } from "@j3-bots/client-runtime/presentation";
@@ -233,25 +233,26 @@ export function PageView({
   }
   const target = aim !== null && aim.for === aimFor ? aim.zoom : null;
   const sliding = target !== null && !same(shown, target);
-  // The view glides after the point as the pointer does, and rests where it gets to.
+  // The view moves after the point as the pointer does, and rests where it gets to.
   const aimed = useEffectEvent(() => ({ to: target, from: shown, view: viewSize }));
   const following = follow !== null;
   useEffect(() => {
     if (!following) return;
-    let glide: {
+    let move: {
       readonly from: Zoom;
       readonly to: Zoom;
       readonly start: number;
-      readonly duration: number;
+      /** How fast it answers, in seconds: 0 under reduced motion. */
+      readonly response: number;
     } | null = null;
     let frameId = requestAnimationFrame(function step() {
       const now = Date.now();
       const { to, from, view: size } = aimed();
       if (to !== null && size !== null) {
-        if (glide === null || !same(glide.to, to)) {
-          glide = { from, to, start: now, duration: reduced ? 0 : viewGlideFor(from, to, size) };
+        if (move === null || !same(move.to, to)) {
+          move = { from, to, start: now, response: reduced ? 0 : viewResponseFor(from, to, size) };
         }
-        const next = glidedBetween(glide.from, glide.to, now - glide.start, glide.duration);
+        const next = movedBetween(move.from, move.to, now - move.start, move.response);
         setZoom((current) => (current !== null && same(next, current) ? current : next));
       }
       frameId = requestAnimationFrame(step);

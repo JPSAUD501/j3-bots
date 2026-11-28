@@ -31,7 +31,7 @@ export type { FakePageHost } from "@j3-bots/browser/testing";
 export { botOpens, TestServerBrowser } from "./browser.ts";
 export { TestCloudSpeech } from "./cloudSpeech.ts";
 export { TestDiskSpace } from "./diskSpace.ts";
-export { botAsks } from "./turns.ts";
+export { botAsks, nextTurn, sendToBot, turnFinishes } from "./turns.ts";
 export { recorded as recordedTelemetry } from "./telemetry.ts";
 export { pastTurns, turnRecorded } from "./usage.ts";
 
