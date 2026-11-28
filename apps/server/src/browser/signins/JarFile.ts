@@ -161,7 +161,7 @@ export type OpenedJar =
   | ({ readonly _tag: "open" } & OpenJar)
   | {
       readonly _tag: "unreadable";
-      /** Makes the file again, empty, under the key: for "Sign out of all sites" (`openJarFile`). */
+      /** Makes the file again, empty, under the key: for "Clear data of all sites" (`openJarFile`). */
       readonly reset: Effect.Effect<OpenJar>;
     };
 

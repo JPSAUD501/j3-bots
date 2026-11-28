@@ -2082,21 +2082,22 @@ const sentences = {
   "settings.siteSignIns.none":
     "Nenhum site guarda dados ainda. Abra um numa aba do navegador e entre se ele pedir: seus bots também vão poder usá-lo.",
   "settings.siteSignIns.unreadable":
-    "Não dá para abrir os dados que o navegador guarda dos sites, então eles não vão de um navegador para outro. Se a chave dos segredos mudou ou o arquivo se danificou, saia de todos os sites para começar de novo.",
+    "Não dá para abrir os dados que o navegador guarda dos sites, então eles não vão de um navegador para outro. Se a chave dos segredos mudou ou o arquivo se danificou, apague os dados de todos os sites para começar de novo.",
   "settings.siteSignIns.locked":
     "Os dados que o navegador guarda dos sites ficam trancados até o J3 Bots conseguir ler seus segredos de novo, então eles não vão de um navegador para outro. Em Segredos você vê o que houve.",
   "settings.siteSignIns.tooBig": "Grande demais para levar entre navegadores",
-  "settings.siteSignIns.signOutSite": "Sair",
-  "settings.siteSignIns.signOutSite.label": "Sair de {site}",
-  "settings.siteSignIns.signOutSite.failed": "Não saiu de {site}. Tente de novo.",
-  "settings.siteSignIns.signOut": "Sair de todos os sites",
-  "settings.siteSignIns.signOut.title": "Sair de todos os sites?",
+  "settings.siteSignIns.signOutSite": "Apagar dados",
+  "settings.siteSignIns.signOutSite.label": "Apagar os dados de {site}",
+  "settings.siteSignIns.signOutSite.failed": "Não apagou os dados de {site}. Tente de novo.",
+  "settings.siteSignIns.signOut": "Apagar dados de todos os sites",
+  "settings.siteSignIns.signOut.title": "Apagar dados de todos os sites?",
   "settings.siteSignIns.signOut.body":
-    "O navegador apaga o que todos os sites guardam, aqui e em todos os computadores. As abas abertas continuam abertas, sem login. Seus bots só voltam a usar esses sites depois que você entrar de novo.",
+    "O navegador apaga o que todos os sites guardam, aqui e em todos os computadores, e você e seus bots saem de todos os sites em que tinham entrado. As abas abertas continuam abertas, sem login. Seus bots só voltam a usar esses sites depois que você entrar de novo.",
   "settings.siteSignIns.signOut.cancel": "Agora não",
-  "settings.siteSignIns.signOut.confirm": "Sair",
-  "settings.siteSignIns.signOut.done": "Você saiu de todos os sites.",
-  "settings.siteSignIns.signOut.failed": "O navegador não saiu dos sites. Tente de novo.",
+  "settings.siteSignIns.signOut.confirm": "Apagar dados",
+  "settings.siteSignIns.signOut.done": "Os dados de todos os sites foram apagados.",
+  "settings.siteSignIns.signOut.failed":
+    "O navegador não apagou os dados dos sites. Tente de novo.",
   "settings.engine.ready": "Rodando, versão {version}",
   "settings.engine.lastKnown":
     "Último estado conhecido. Este dispositivo não está conectado ao J3 Bots agora.",

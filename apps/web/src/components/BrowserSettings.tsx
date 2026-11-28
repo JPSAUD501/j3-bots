@@ -11,7 +11,7 @@ import { SkeletonRows } from "./ui/skeleton";
 
 /**
  * Settings' Browser page: the sites that keep data in J3 Bots' browser,
- * which is how the person and their bots stay signed in, each with its own Sign out, then
+ * which is how the person and their bots stay signed in, each with its own Clear data, then
  * signing out of all of them, which asks first since it ends every one at
  * once. A server older than the list shows none, only signing out of all;
  * sign-ins locked with the secrets can be signed out of only once the
