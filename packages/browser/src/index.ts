@@ -8,6 +8,7 @@ export {
 export { addressOf } from "./driver/address.ts";
 export { type DriverPage, makeDriverPage, type PointerReporter } from "./driver/DriverPage.ts";
 export { hostErrorOf } from "./driver/errors.ts";
+export { type DatabaseDump, readDatabases, replaceDatabases } from "./indexedDb.ts";
 export {
   type BrowserHostRpc,
   driverTabCalls,

@@ -11,6 +11,7 @@ import {
   BrowserHostError,
   type BrowserHostEvent,
   type BrowserHostHello,
+  BrowserIndexedDb,
   type BrowserOriginStorage,
   BrowserTabRef,
   MAX_ATTACHMENT_NAME_LENGTH,
@@ -26,6 +27,8 @@ import {
   makeDriverPage,
   type PageHost,
   type PageHostPayload,
+  readDatabases,
+  replaceDatabases,
 } from "@j3-bots/browser";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -52,6 +55,9 @@ import { CHROME_VERSION, type ChromePlatform } from "./chrome.ts";
 
 /** Cookies as `Storage.getCookies` answers, each read by the shared mapping. */
 const CdpCookies = Schema.Struct({ cookies: Schema.Array(Schema.Unknown) });
+
+/** An origin's databases, as a page of it gave them. */
+const decodeDatabases = Schema.decodeUnknownEffect(Schema.Array(BrowserIndexedDb));
 
 /** What signing out clears of an origin besides cookies, as `Storage.clearDataForOrigin` names it. */
 const CLEARED_STORAGE = [
@@ -459,28 +465,58 @@ export const launchServerHost = (input: {
         }
       });
 
-    const readStorage = (input: { readonly origins: ReadonlyArray<string> }) =>
+    /**
+     * Each origin's `localStorage`, and its databases when `indexedDb`: every
+     * record of them, in the shape Playwright's `storageState` gives, read in
+     * the probe.
+     */
+    const readStorage = (input: PageHostPayload<"storage.read">) =>
       Effect.forEach(input.origins, (origin) =>
-        inProbe(origin, (page) =>
-          page.evaluate(() =>
+        inProbe(origin, async (page) => ({
+          localStorage: await page.evaluate(() =>
             Object.keys(localStorage).map((name) => ({
               name,
               value: localStorage.getItem(name) ?? "",
             })),
           ),
-        ).pipe(Effect.map((localStorage): BrowserOriginStorage => ({ origin, localStorage }))),
+          databases: input.indexedDb ? await page.evaluate(readDatabases) : undefined,
+        })).pipe(
+          Effect.flatMap(({ localStorage, databases }) =>
+            databases === undefined
+              ? Effect.succeed<BrowserOriginStorage>({ origin, localStorage })
+              : decodeDatabases(databases).pipe(
+                  Effect.mapError(
+                    () => new BrowserHostError({ reason: "page", detail: "Unreadable databases." }),
+                  ),
+                  Effect.map((indexedDb): BrowserOriginStorage => ({
+                    origin,
+                    localStorage,
+                    indexedDb,
+                  })),
+                ),
+          ),
+        ),
       ).pipe(Effect.map((origins) => ({ origins })));
 
+    /**
+     * Replaces each origin's `localStorage`, and its databases where given,
+     * from the probe. A database of the same version and shape is emptied and
+     * filled again in place, so a tab of the origin that holds it open does
+     * not stop the write; one a tab holds open that must be deleted fails it,
+     * and the sign-ins try again later.
+     */
     const writeStorage = (origins: ReadonlyArray<BrowserOriginStorage>) =>
       Effect.forEach(
         origins,
         (stored) =>
-          inProbe(stored.origin, (page) =>
-            page.evaluate((items) => {
+          inProbe(stored.origin, async (page) => {
+            if (stored.indexedDb !== undefined)
+              await page.evaluate(replaceDatabases, stored.indexedDb);
+            await page.evaluate((items) => {
               localStorage.clear();
               for (const item of items) localStorage.setItem(item.name, item.value);
-            }, stored.localStorage),
-          ),
+            }, stored.localStorage);
+          }),
         { discard: true },
       );
 
@@ -601,7 +637,14 @@ export const launchServerHost = (input: {
           arch: platform === "linux-arm64" || platform === "mac-arm64" ? "arm64" : "x64",
         },
         browser: { version: CHROME_VERSION, userAgent: userAgentOf(platform) },
-        capabilities: { screencast: true, input: true, cookies: true, storage: true, files: true },
+        capabilities: {
+          screencast: true,
+          input: true,
+          cookies: true,
+          storage: true,
+          indexedDb: true,
+          files: true,
+        },
         tabs: states,
       };
     });
