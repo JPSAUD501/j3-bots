@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { glideCurve, glideFor } from "@j3-bots/design-tokens";
 import type { DrawnRect, PageSize, Point } from "./browser.ts";
 
 // How a live view draws a picture of the page: resting so it covers the
-// view, then zoomed and moved by the person's fingers, or following a bot at
-// a size that reads. Zooming changes only the picture on the device,
+// view, then zoomed and moved by the person's fingers, or following the bot
+// at work, its point kept in sight. Zooming changes only the picture on the device,
 // never the page, which the bots and the computer see as it is.
 
 /** A size in the view's points. */
@@ -57,18 +58,22 @@ export const keptInView = (zoom: Zoom, picture: Size, view: Size): Zoom => {
 };
 
 /**
- * Where the view rests until the person moves it or it follows a bot. A page
- * of the view's shape, or taller, is fitted to the view's width at its top.
- * One wider than the view's shape, as a computer's page on a phone, is
- * zoomed until it fills the view's height, its middle across in view, so
- * the view is not left mostly empty; the person pinches out to see all of it.
+ * Where the view rests until the person moves it, and where following a bot
+ * starts from. A page of the view's shape, or taller, is fitted to the
+ * view's width at its top. One wider than the view's shape, as a computer's
+ * page on a phone, is zoomed until it fills the view's height, from its
+ * top-left, where a page begins, so the view is not left mostly empty; the
+ * person pinches out to see all of it.
  */
 export const restingZoom = (picture: Size, view: Size): Zoom => {
   if (picture.height <= 0 || picture.height >= view.height) {
     return keptInView(NO_ZOOM, picture, view);
   }
-  const scale = Math.min(view.height / picture.height, MAX_ZOOM);
-  return keptInView({ scale, x: (view.width - picture.width * scale) / 2, y: 0 }, picture, view);
+  return keptInView(
+    { scale: Math.min(view.height / picture.height, MAX_ZOOM), x: 0, y: 0 },
+    picture,
+    view,
+  );
 };
 
 const distance = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.y - b.y);
@@ -145,24 +150,93 @@ export const zoomOn = (
   );
 };
 
-/** How long, in ms, a followed view takes to cover most of the way to where the bot is. */
-const FOLLOW_EASE_MS = 450;
+/** How far inside the view's edges a followed point is kept, in view points: room for its pointer and tag. */
+const FOLLOW_MARGIN = 64;
 
 /**
- * `from` moved toward `to` over `elapsed` ms, slowing as it nears: the view
- * slides after the bot's pointer instead of jumping to it.
+ * The view that keeps `point`, a point on the page in its CSS pixels, in
+ * sight in `view` at least `FOLLOW_MARGIN` inside its edges, moved from
+ * `from` as little as that takes, at `from`'s scale: a followed bot's work
+ * stays in view, and the view moves only once the bot works near its edge.
  */
-export const easedToward = (from: Zoom, to: Zoom, elapsed: number): Zoom => {
-  const step = 1 - Math.exp(-Math.max(elapsed, 0) / FOLLOW_EASE_MS);
-  // Close enough to see no difference, it arrives, so the view comes to rest.
-  const toward = (a: number, b: number, rest: number) => {
-    const next = a + (b - a) * step;
-    return Math.abs(b - next) < rest ? b : next;
+export const keptInSight = (
+  from: Zoom,
+  point: Point,
+  page: PageSize,
+  picture: Size,
+  view: Size,
+): Zoom => {
+  const inside = (at: number, length: number) => {
+    const margin = Math.min(FOLLOW_MARGIN, length / 2);
+    return at < margin ? margin - at : at > length - margin ? length - margin - at : 0;
   };
+  const at = {
+    x: from.x + (page.width > 0 ? point.x / page.width : 0) * picture.width * from.scale,
+    y: from.y + (page.height > 0 ? point.y / page.height : 0) * picture.height * from.scale,
+  };
+  return keptInView(
+    {
+      scale: from.scale,
+      x: from.x + inside(at.x, view.width),
+      y: from.y + inside(at.y, view.height),
+    },
+    picture,
+    view,
+  );
+};
+
+/**
+ * Where a view that follows a bot heads as the bot points at `point`: from
+ * where it headed before (`previous`), or from where it rests, moved only as
+ * far as keeps the point in sight. With no point yet, it stays.
+ */
+export const followedView = (
+  previous: Zoom | null,
+  point: Point | null,
+  page: PageSize,
+  picture: Size,
+  view: Size,
+): Zoom => {
+  const home = restingZoom(picture, view);
+  const from = previous !== null && previous.scale === home.scale ? previous : home;
+  return point === null ? from : keptInSight(from, point, page, picture, view);
+};
+
+/** Where a cubic Bézier easing curve `[x1, y1, x2, y2]` is at `t`, as CSS's `cubic-bezier()` draws it. */
+const bezierAt = (curve: readonly [number, number, number, number], t: number): number => {
+  const [x1, y1, x2, y2] = curve;
+  const along = (a: number, b: number, s: number) =>
+    3 * a * s * (1 - s) ** 2 + 3 * b * s * s * (1 - s) + s ** 3;
+  // The curve's parameter where its x is `t`, found by halving: x grows with it.
+  let low = 0;
+  let high = 1;
+  for (let step = 0; step < 24; step += 1) {
+    const middle = (low + high) / 2;
+    if (along(x1, x2, middle) < t) low = middle;
+    else high = middle;
+  }
+  return along(y1, y2, (low + high) / 2);
+};
+
+/** How long, in ms, the view glides from `from` to `to`: as a pointer's glide across that share of the view. */
+export const viewGlideFor = (from: Zoom, to: Zoom, view: Size): number => {
+  const diagonal = Math.hypot(view.width, view.height);
+  return glideFor(diagonal > 0 ? Math.hypot(to.x - from.x, to.y - from.y) / diagonal : 0);
+};
+
+/**
+ * The view `elapsed` ms into a glide of `duration` ms from `from` to `to`,
+ * on the curve a bot's pointer glides on: a followed view moves as the
+ * pointer it follows does, and arrives.
+ */
+export const glidedBetween = (from: Zoom, to: Zoom, elapsed: number, duration: number): Zoom => {
+  if (duration <= 0 || elapsed >= duration) return to;
+  const share = bezierAt(glideCurve, Math.max(elapsed, 0) / duration);
+  const between = (a: number, b: number) => a + (b - a) * share;
   return {
-    scale: toward(from.scale, to.scale, 0.001),
-    x: toward(from.x, to.x, 0.5),
-    y: toward(from.y, to.y, 0.5),
+    scale: between(from.scale, to.scale),
+    x: between(from.x, to.x),
+    y: between(from.y, to.y),
   };
 };
 

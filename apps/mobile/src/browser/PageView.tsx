@@ -2,7 +2,8 @@
 import type { BrowserPicture, BrowserProbe, BrowserViewHandle } from "@j3-bots/client-runtime";
 import {
   drawnRect,
-  easedToward,
+  followedView,
+  glidedBetween,
   fitted,
   keptInView,
   LONG_PRESS_MS,
@@ -21,6 +22,7 @@ import {
   touchLifted,
   touchMoved,
   touchStarted,
+  viewGlideFor,
   type Zoom,
   zoomOn,
 } from "@j3-bots/client-runtime/presentation";
@@ -87,8 +89,9 @@ export interface PageViewHandle {
  * The page, drawn from the view's pictures, with each bot's pointer over it.
  *
  * A computer's page, wider than the view's shape, rests filling the view's
- * height (`restingZoom`). Following a bot, it opens at a size that reads,
- * where the bot acts, and slides after its pointer. Two fingers zoom; one moves the zoomed view and,
+ * height from its top-left (`restingZoom`). Following a bot, the view keeps
+ * its point in sight, gliding as the pointer does once the bot works near an
+ * edge (`followedView`). Two fingers zoom; one moves the zoomed view and,
  * past its edge, scrolls the page itself, as a phone's browser does. Moving
  * the view stops following, and the little map shows where the view is. A
  * tap clicks the page and marks where it landed, unless it only stopped a
@@ -210,32 +213,44 @@ export function PageView({
         : keptInView(zoom, picture, viewSize);
   const drawn = picture === null ? null : drawnRect(picture, shown);
 
-  // Where the view goes while it follows a bot: its pointer, at a size that reads, or the
-  // page's top at that size before the bot has pointed anywhere.
-  const followed = follow === null ? null : (cursors.get(follow) ?? null);
-  const target =
-    follow !== null && picture !== null && viewSize !== null && page !== null
-      ? zoomOn(followed ?? { x: 0, y: 0 }, readingScale(viewSize, page), page, picture, viewSize)
-      : null;
+  // Where the view heads while it follows a bot: from where it rests, moved only as far as keeps
+  // the bot's point in sight, each time the bot points elsewhere.
+  const point = follow === null ? null : (cursors.get(follow) ?? null);
+  const aimFor =
+    follow === null || picture === null || viewSize === null || page === null
+      ? null
+      : `${follow} ${point?.x ?? ""} ${point?.y ?? ""} ${viewSize.width} ${viewSize.height} ${page.width} ${page.height}`;
+  const [aim, setAim] = useState<{ readonly for: string; readonly zoom: Zoom } | null>(null);
+  if ((aim?.for ?? null) !== aimFor) {
+    setAim(
+      aimFor === null || picture === null || viewSize === null || page === null
+        ? null
+        : { for: aimFor, zoom: followedView(aim?.zoom ?? null, point, page, picture, viewSize) },
+    );
+  }
+  const target = aim !== null && aim.for === aimFor ? aim.zoom : null;
   const sliding = target !== null && !same(shown, target);
-  // The view slides after the pointer, frame by frame, and rests where it gets to.
-  const aimed = useEffectEvent(() => ({ to: target, from: shown }));
+  // The view glides after the point as the pointer does, and rests where it gets to.
+  const aimed = useEffectEvent(() => ({ to: target, from: shown, view: viewSize }));
   const following = follow !== null;
   useEffect(() => {
     if (!following) return;
-    let last = Date.now();
+    let glide: {
+      readonly from: Zoom;
+      readonly to: Zoom;
+      readonly start: number;
+      readonly duration: number;
+    } | null = null;
     let frameId = requestAnimationFrame(function step() {
       const now = Date.now();
-      const { to, from } = aimed();
-      if (to !== null) {
-        setZoom((current) => {
-          // The first time, from where the view rests.
-          const at = current ?? from;
-          const next = reduced ? to : easedToward(at, to, now - last);
-          return current !== null && same(next, current) && same(next, to) ? current : next;
-        });
+      const { to, from, view: size } = aimed();
+      if (to !== null && size !== null) {
+        if (glide === null || !same(glide.to, to)) {
+          glide = { from, to, start: now, duration: reduced ? 0 : viewGlideFor(from, to, size) };
+        }
+        const next = glidedBetween(glide.from, glide.to, now - glide.start, glide.duration);
+        setZoom((current) => (current !== null && same(next, current) ? current : next));
       }
-      last = now;
       frameId = requestAnimationFrame(step);
     });
     return () => cancelAnimationFrame(frameId);

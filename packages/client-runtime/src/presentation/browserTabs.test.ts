@@ -191,10 +191,10 @@ describe("faces and following", () => {
     expect(viewerTab({ private: true, acting: ana }).onIt).toEqual([]);
   });
 
-  it("follows the bot the person came from while it is on the tab, else the acting one", () => {
-    expect(followedBot(viewerTab({ acting: ana }), lia)).toBe(lia);
-    expect(followedBot(viewerTab({ acting: ana, onIt: [ana] }), lia)).toBe(ana);
-    expect(followedBot(viewerTab({ onIt: [] }), null)).toBeNull();
+  it("follows the acting bot, else the one that worked on the tab last", () => {
+    expect(followedBot(viewerTab({ acting: lia }))).toBe(lia);
+    expect(followedBot(viewerTab({ onIt: [lia, ana] }))).toBe(lia);
+    expect(followedBot(viewerTab({ onIt: [] }))).toBeNull();
   });
 });
 

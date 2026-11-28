@@ -331,9 +331,9 @@ function TabLive({
   const page = useRef<LivePageHandle>(null);
   const closeButton = useRef<HTMLButtonElement>(null);
 
-  // A wide page opens near the bot, at a size that reads, and slides after its pointer.
+  // The view keeps the work of the bot at it in sight until the person moves or zooms it.
   const [following, setFollowing] = useState(true);
-  const followed = tab === null ? null : followedBot(tab, from.id);
+  const followed = tab === null ? null : followedBot(tab);
   const follow = following ? followed : null;
 
   const [opened, setOpened] = useState<Opened>(null);
