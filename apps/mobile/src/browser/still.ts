@@ -1,74 +1,21 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { BrowserViewSize, BrowserViewStatus, J3Client } from "@j3-bots/client-runtime";
+import { oneAtATime, takeStill } from "@j3-bots/client-runtime";
 import { useJ3Client } from "@j3-bots/client-runtime/react";
 import type { BrowserTabRef } from "@j3-bots/contracts";
 import { useEffect, useEffectEvent, useRef } from "react";
 import { PixelRatio } from "react-native";
 import { keepPicture, type LastPicture, usePictureOfPage } from "./pictures.ts";
 
-// A still of a tab nobody here watches: its first picture, for its card in
-// the list of tabs. This device has one viewer per tab on the server, and a
-// socket it opens on a tab takes the place of its view of it, so a still is
-// never taken of a tab this device views or holds.
+// A still of a tab nobody here watches, for its card in the list of tabs.
+// This device has one viewer per tab on the server, and a socket it opens on
+// a tab takes the place of its view of it, so a still is never taken of a
+// tab this device views or holds, and one under way stops as it comes to.
 
-/** How long a still waits for its picture before giving up. */
-const STILL_TIMEOUT = 10_000;
 /** A card's picture is small: it is taken at a lower quality than a page's. */
 const STILL_QUALITY = 50;
 
-/** Whether a view's socket has ended for good: nothing more comes on it. */
-const ended = (status: BrowserViewStatus): boolean => {
-  switch (status._tag) {
-    case "connecting":
-    case "live":
-    case "reconnecting":
-    case "paused":
-      return false;
-    case "gone":
-    case "setup-needed":
-    case "replaced":
-    case "failed":
-      return true;
-  }
-};
-
-/** One picture of a tab: opens a view, keeps the first picture it is sent and closes it. Null when none came. */
-const takeStill = (
-  client: J3Client,
-  ref: BrowserTabRef,
-  size: BrowserViewSize,
-): Promise<Uint8Array | null> =>
-  new Promise((resolve) => {
-    const view = client.openBrowserView({ ref, size: () => size });
-    let done = false;
-    const stops: Array<() => void> = [];
-    const finish = (jpeg: Uint8Array | null) => {
-      if (done) return;
-      done = true;
-      for (const stop of stops) stop();
-      view.close();
-      resolve(jpeg);
-    };
-    stops.push(
-      view.picture.subscribe(() => {
-        const picture = view.picture.get();
-        if (picture !== null) finish(picture.jpeg);
-      }),
-      view.state.subscribe(() => {
-        if (ended(view.state.get().status)) finish(null);
-      }),
-    );
-    const timer = setTimeout(() => finish(null), STILL_TIMEOUT);
-    stops.push(() => clearTimeout(timer));
-  });
-
 /** Stills are taken one after another, so a list of tabs opens one socket at a time. */
-let turn: Promise<unknown> = Promise.resolve();
-const inTurn = <A>(run: () => Promise<A>): Promise<A> => {
-  const next = turn.then(run);
-  turn = next.catch(() => undefined);
-  return next;
-};
+const inTurn = oneAtATime();
 
 /** The tab a still is of, as far as taking one goes. */
 export interface StillTab {
@@ -82,31 +29,65 @@ export interface StillTab {
 /**
  * The last picture of the page `tab` is on, null while there is none: what
  * a view of it in this app showed last, or a still of it, taken `width`
- * points wide while `shown`, as the tab navigates and finishes loading.
+ * points wide while `shown`, as the tab navigates and finishes loading; one
+ * due while another is under way is taken once that one ends. Each is kept
+ * with the address the tab had as it was taken.
  */
 export function useStill(tab: StillTab, width: number, shown: boolean): LastPicture | null {
   const client = useJ3Client();
   const busy = useRef(false);
-  // A still that waits its turn once the card is gone opens no socket.
+  /** A still came due while one was under way. */
+  const again = useRef(false);
+  // A still that waits its turn once the card is gone opens no socket, and one under way stops.
   const mounted = useRef(false);
+  const running = useRef<AbortController | null>(null);
   useEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
+      running.current?.abort();
     };
   }, []);
+  // The tab shown or held here now: a still of it would take the place of its view.
+  useEffect(() => {
+    if (tab.viewedHere) running.current?.abort();
+  }, [tab.viewedHere]);
+
+  // The tab as it is when a still's turn comes.
+  const now = useEffectEvent(() =>
+    !shown || width <= 0 || tab.viewedHere ? null : { tab, width },
+  );
   const take = useEffectEvent(async () => {
-    if (busy.current || tab.viewedHere || width <= 0) return;
-    const { ref, url } = tab;
-    const size = { maxWidth: PixelRatio.getPixelSizeForLayoutSize(width), quality: STILL_QUALITY };
+    if (busy.current) {
+      again.current = true;
+      return;
+    }
     busy.current = true;
     try {
-      const jpeg = await inTurn(() =>
-        mounted.current ? takeStill(client, ref, size) : Promise.resolve(null),
-      );
-      if (jpeg !== null) keepPicture(ref, jpeg, Date.now(), url);
+      const kept = await inTurn(async () => {
+        const at = now();
+        if (at === null || !mounted.current) return null;
+        const { ref, url } = at.tab;
+        const size = {
+          maxWidth: PixelRatio.getPixelSizeForLayoutSize(at.width),
+          quality: STILL_QUALITY,
+        };
+        const mine = new AbortController();
+        running.current = mine;
+        try {
+          const jpeg = await takeStill(client.openBrowserView, ref, size, mine.signal);
+          return jpeg === null ? null : { ref, url, jpeg };
+        } finally {
+          if (running.current === mine) running.current = null;
+        }
+      });
+      if (kept !== null) keepPicture(kept.ref, kept.jpeg, Date.now(), kept.url);
     } finally {
       busy.current = false;
+      if (again.current) {
+        again.current = false;
+        void take();
+      }
     }
   });
   // What calls for a new still: another tab, another page and the end of a load.

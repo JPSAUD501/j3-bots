@@ -33,10 +33,6 @@ describe("the viewer's zoom", () => {
     expect(restingZoom(tall, view)).toEqual(NO_ZOOM);
   });
 
-  it("centers a picture shorter than the view, as the person pinches out to see all of it", () => {
-    expect(keptInView(NO_ZOOM, picture, view)).toEqual({ scale: 1, x: 0, y: 175 });
-  });
-
   it("keeps the page point between the fingers under them as they spread", () => {
     const from = [
       { x: 150, y: 100 },
@@ -81,7 +77,7 @@ describe("the viewer's zoom", () => {
   it("never leaves a gap at an edge the picture can cover", () => {
     const zoom = keptInView({ scale: 2, x: 50, y: -900 }, picture, view);
     // 800 by 500: wider than the view, shorter than it.
-    expect(zoom).toEqual({ scale: 2, x: 0, y: 50 });
+    expect(zoom).toEqual({ scale: 2, x: 0, y: 0 });
     expect(keptInView({ scale: 4, x: -2000, y: -900 }, picture, view)).toEqual({
       scale: 4,
       x: -1200,

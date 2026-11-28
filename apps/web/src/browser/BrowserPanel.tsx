@@ -70,7 +70,7 @@ function Panel({
       shown,
       refresh: atWork,
       // Each action's end, and the tab given back, change the page: a still then shows it as it is.
-      activity: `${viewer.acting ?? ""} ${viewer.holder._tag}`,
+      activity: `${viewer.acting ?? ""} ${viewer.holder._tag === "bot" ? viewer.holder.botId : viewer.holder._tag}`,
     },
   );
   const site = siteOf(tab.url) || t("browser.panel.newTab");

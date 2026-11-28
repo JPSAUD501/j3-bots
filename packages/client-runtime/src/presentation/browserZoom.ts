@@ -41,9 +41,9 @@ export const drawnRect = (picture: Size, zoom: Zoom): DrawnRect => ({
 const clamp = (value: number, low: number, high: number) => Math.min(high, Math.max(low, value));
 
 /**
- * `zoom` kept over the view: a picture narrower or shorter than the view is
- * centered in it that way, and a larger one never leaves a gap at an edge it
- * can cover.
+ * `zoom` kept over the view: a picture narrower than the view is centered
+ * across it, one shorter sits at the top, and a larger one never leaves a
+ * gap at an edge it can cover.
  */
 export const keptInView = (zoom: Zoom, picture: Size, view: Size): Zoom => {
   const scale = clamp(zoom.scale, 1, MAX_ZOOM);
@@ -52,7 +52,7 @@ export const keptInView = (zoom: Zoom, picture: Size, view: Size): Zoom => {
   return {
     scale,
     x: width <= view.width ? (view.width - width) / 2 : clamp(zoom.x, view.width - width, 0),
-    y: height <= view.height ? (view.height - height) / 2 : clamp(zoom.y, view.height - height, 0),
+    y: height <= view.height ? 0 : clamp(zoom.y, view.height - height, 0),
   };
 };
 

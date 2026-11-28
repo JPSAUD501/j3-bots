@@ -737,7 +737,7 @@ function LiveBar({
                 index: String(index + 1),
                 count: String(tabs.length),
               })}
-              className="flex-row flex-wrap justify-center gap-1.5"
+              className="max-w-full shrink flex-row flex-wrap justify-center gap-1.5"
             >
               {tabs.map((each, at) => (
                 <View
