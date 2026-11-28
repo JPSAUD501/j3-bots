@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { pageHostOnSocket } from "@j3-bots/browser";
-import { HTTP_PATHS, NotAuthenticated } from "@j3-bots/contracts";
+import { BROWSER_HOST_PROTOCOL_VERSION, HTTP_PATHS, NotAuthenticated } from "@j3-bots/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as HttpRouter from "effect/http/HttpRouter";
@@ -17,8 +17,9 @@ const refuse = HttpServerResponse.jsonUnsafe(new NotAuthenticated(), { status: 4
  * desktop app's own browser dials it with its device token as a bearer, and
  * the server drives that browser over it for as long as it stays open. A
  * host that says it is anything but the desktop of the device the token
- * belongs to is closed before any of its tabs is listed; so is one whose
- * device is revoked. Nothing the socket carries is logged.
+ * belongs to, or that speaks another version of the host protocol, is
+ * closed before any of its tabs is listed; so is one whose device is
+ * revoked. Nothing the socket carries is logged.
  */
 export const route = HttpRouter.add(
   "GET",
@@ -43,6 +44,11 @@ export const route = HttpRouter.add(
         const hello = yield* host.hello;
         if (hello.host.kind !== "desktop" || hello.host.device !== device.value) {
           return yield* Effect.logWarning("A browser host said it was another computer's");
+        }
+        if (hello.protocol !== BROWSER_HOST_PROTOCOL_VERSION) {
+          return yield* Effect.logWarning("A browser host speaks another version of the protocol", {
+            protocol: hello.protocol,
+          });
         }
         // Attached with the hello just checked, so the host cannot answer another.
         const attached = yield* browser.attachHost(host, hello);

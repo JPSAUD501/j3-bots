@@ -270,6 +270,10 @@ interface Tab {
   readonly hostChanges: SubscriptionRef.SubscriptionRef<BrowserTabWhere>;
   /** Its opening again after its host lost it, while that runs. */
   reopening: Deferred.Deferred<Host, BrowserToolRefused> | null;
+  /** What each bot saw of it when it last used it. */
+  readonly seen: Map<BotId, Seen>;
+  /** Lines each bot reads with its next result here: what happened meanwhile. */
+  readonly pending: Map<BotId, Array<string>>;
 }
 
 const keyOfWhere = (where: BrowserTabWhere): HostKey | null => {
@@ -318,9 +322,6 @@ export const layer = Layer.effect(
     const hosts = new Map<HostKey, Host>();
     /** Each bot's current tab: the one it last opened or used. */
     const current = new Map<BotId, BrowserTabRef>();
-    const seen = new Map<string, Seen>();
-    /** Lines a bot reads with its next result on a tab: what happened there meanwhile. */
-    const pending = new Map<string, Array<string>>();
     const graces = new Map<HostKey, Fiber.Fiber<void>>();
     const version = yield* SubscriptionRef.make(0);
     const pointers = yield* PubSub.unbounded<BotPointer>();
@@ -339,7 +340,6 @@ export const layer = Layer.effect(
 
     const now = Clock.currentTimeMillis;
     const bump = SubscriptionRef.update(version, (n) => n + 1);
-    const seenKey = (botId: BotId, ref: BrowserTabRef) => `${botId}\u0000${ref}`;
 
     const nameOf = Effect.fnUntraced(function* (botId: BotId) {
       const found = yield* bots.find(botId);
@@ -443,6 +443,8 @@ export const layer = Layer.effect(
         viewers: 0,
         hostChanges: yield* SubscriptionRef.make(input.where),
         reopening: null,
+        seen: new Map(),
+        pending: new Map(),
       };
       tabs.set(tab.ref, tab);
       // Each change of hands changes the list.
@@ -501,10 +503,11 @@ export const layer = Layer.effect(
     };
 
     const tell = (botId: BotId, ref: BrowserTabRef, line: string) => {
-      const key = seenKey(botId, ref);
-      const lines = pending.get(key) ?? [];
+      const tab = tabs.get(ref);
+      if (tab === undefined) return;
+      const lines = tab.pending.get(botId) ?? [];
       lines.push(line);
-      pending.set(key, lines);
+      tab.pending.set(botId, lines);
     };
 
     // -----------------------------------------------------------------------
@@ -561,16 +564,18 @@ export const layer = Layer.effect(
       hello: BrowserHostHello,
       page: BrowserPageState,
       opener: BrowserTabRef | null,
-      isPrivate: boolean,
+      reportedPrivate: boolean,
     ) {
       const at = yield* now;
+      const openerTab = opener === null ? undefined : tabs.get(opener);
+      // What a private tab opens is private too, whatever its host says.
+      const isPrivate = reportedPrivate || openerTab?.private === true;
       const openedBy: BrowserTabOpener =
         opener !== null
           ? { kind: "page", tab: opener }
           : hello.host.kind === "desktop"
             ? { kind: "person", device: hello.host.device }
             : { kind: "page", tab: page.tab };
-      const openerTab = opener === null ? undefined : tabs.get(opener);
       const tab = yield* makeTab({
         ref: page.tab,
         openedBy,
@@ -735,6 +740,7 @@ export const layer = Layer.effect(
         downloads: new Map(),
       };
       hosts.set(key, entry);
+      yield* Effect.addFinalizer(() => detach(entry));
       // The host's tabs, matched with the registry. One that runs on another
       // live host since is closed here, so a tab runs in one place.
       const held = [
@@ -776,17 +782,16 @@ export const layer = Layer.effect(
         ),
         Effect.forkScoped,
       );
-      yield* Effect.addFinalizer(() => detach(entry));
       return { ended: Deferred.await(ended) };
     });
 
     /** The server's browser, started if it is not running. */
     const serverHost = serverLock.withPermits(1)(
       Effect.gen(function* () {
+        serverUsedAt = yield* now;
         const running = hosts.get(SERVER);
         if (running !== undefined) return running;
         const scope = yield* Scope.make();
-        serverUsedAt = yield* now;
         yield* serverBrowser.launch.pipe(
           Effect.mapError((cause): ServerBrowserProblem => cause.reason),
           Effect.flatMap((launched) =>
@@ -940,11 +945,10 @@ export const layer = Layer.effect(
      * one line, and the note that it sees the tab as it is now.
      */
     const noticeFor = Effect.fnUntraced(function* (botId: BotId, tab: Tab) {
-      const key = seenKey(botId, tab.ref);
-      const before = seen.get(key);
-      seen.set(key, { actions: tab.actionCount, reopened: tab.reopened });
-      const lines = pending.get(key) ?? [];
-      pending.delete(key);
+      const before = tab.seen.get(botId);
+      tab.seen.set(botId, { actions: tab.actionCount, reopened: tab.reopened });
+      const lines = tab.pending.get(botId) ?? [];
+      tab.pending.delete(botId);
       const state = yield* tab.control.state;
       if (state.holder?.kind === "person") lines.push(BROWSER_NOTES.personUsing);
       if (before !== undefined && tab.reopened > before.reopened)
@@ -960,7 +964,7 @@ export const layer = Layer.effect(
 
     /** The bot saw the tab as its own action left it. */
     const sawOwn = (botId: BotId, tab: Tab) => {
-      seen.set(seenKey(botId, tab.ref), { actions: tab.actionCount, reopened: tab.reopened });
+      tab.seen.set(botId, { actions: tab.actionCount, reopened: tab.reopened });
     };
 
     const withNotice = <A extends object>(value: A, notice: Option.Option<string>): Noticed<A> =>
@@ -1462,6 +1466,8 @@ export const layer = Layer.effect(
     const withdraw = Effect.fn("Browser.withdraw")(function* (botId: BotId) {
       for (const tab of tabs.values()) {
         yield* tab.control.withdraw(botId);
+        tab.seen.delete(botId);
+        tab.pending.delete(botId);
         if (tab.bots.delete(botId)) yield* persist(tab);
       }
       current.delete(botId);
@@ -1525,7 +1531,9 @@ export const layer = Layer.effect(
           if (host !== undefined) yield* host.host.close(tab.ref).pipe(Effect.ignore);
         }
       }
+      // Not while a tab is being placed on it, which it does not list yet.
       const serverIdle =
+        serverPending === 0 &&
         [...tabs.values()].every((tab) => tab.where.kind !== "server") &&
         at - serverUsedAt >= Duration.toMillis(SWEEP_EVERY);
       if (server !== null && serverIdle) yield* serverLock.withPermits(1)(closeServerBrowser);
@@ -1567,7 +1575,6 @@ export const tabAccessLayer = Layer.effect(
       if (Option.isNone(found) || Option.isNone(found.value.host))
         return yield* new FillHoldRefused({ reason: "no-tab" });
       const { control } = found.value;
-      const host = found.value.host.value;
       const held = yield* Deferred.make<void>();
       // The fill holds the tab until this scope closes, which interrupts it.
       const holding = yield* control
@@ -1593,10 +1600,15 @@ export const tabAccessLayer = Layer.effect(
         yield* Fiber.interrupt(holding);
         return yield* refused.value;
       }
+      // The tab may have moved, or lost its host, while the fill waited its turn.
       const after = yield* browser.handsOf(ref);
+      if (Option.isNone(after) || Option.isNone(after.value.host)) {
+        yield* Fiber.interrupt(holding);
+        return yield* new FillHoldRefused({ reason: "unavailable" });
+      }
       return {
-        host,
-        page: Option.match(after, { onNone: () => found.value.page, onSome: (it) => it.page }),
+        host: after.value.host.value,
+        page: after.value.page,
         preempted: Effect.map(control.state, (state) => state.holder?.kind !== "fill"),
       };
     });

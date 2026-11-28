@@ -62,7 +62,7 @@ const withServer = <A, E>(effect: Effect.Effect<A, E, HttpServer.HttpServer | Sc
 it.live("answers the server's calls and streams its events over the socket it dialed", () =>
   Effect.gen(function* () {
     const reached = yield* Deferred.make<PageHost>();
-    yield* linked((socket) =>
+    const { fake } = yield* linked((socket) =>
       Effect.gen(function* () {
         const { host } = yield* pageHostOnSocket(socket);
         yield* Deferred.succeed(reached, host);
@@ -78,7 +78,8 @@ it.live("answers the server's calls and streams its events over the socket it di
     });
     assert.strictEqual(page.tab, TAB);
     const event = yield* host.events.pipe(Stream.take(1), Stream.runCollect, Effect.forkChild);
-    yield* Effect.sleep(50);
+    // Until the call reaches the host, what it sends would be lost.
+    while (!(yield* fake.calls).some(({ call }) => call === "host.events")) yield* Effect.yieldNow;
     yield* host.navigate({ tab: TAB, to: { kind: "url", url: "https://example.test/two" } });
     const [changed] = yield* Fiber.join(event);
     assert.strictEqual(changed?.type, "tab.changed");

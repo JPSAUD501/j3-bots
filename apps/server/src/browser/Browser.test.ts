@@ -221,6 +221,15 @@ it.effect("keeps a private pop-up from the bot whose tab opened it", () =>
     assert.strictEqual(read.tab, opener);
     const shared = yield* tabsWhen((tabs) => tabs.some((tab) => tab.ref === popup));
     assert.deepStrictEqual(shared.find((tab) => tab.ref === popup)?.onIt, []);
+
+    // What the private tab opens in turn is private, though its host says not.
+    const next = BrowserTabRef.make("tab-from-private");
+    const nextPage = yield* host.open({ tab: next, private: false, background: false });
+    yield* host.emit({ type: "tab.opened", page: nextPage, opener: popup, private: false });
+    const listed = yield* tabsWhen((tabs) => tabs.some((tab) => tab.ref === next));
+    assert.isTrue(listed.find((tab) => tab.ref === next)?.private);
+    const refused = yield* browser.tools.snapshot(bot.id, { tab: next }).pipe(Effect.flip);
+    assert.strictEqual(refused.text, BROWSER_NOTES.noTab(next));
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 

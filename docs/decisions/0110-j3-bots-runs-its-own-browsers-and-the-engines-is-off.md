@@ -24,7 +24,7 @@ The owner wants a browser that is well made and works with real sites, for bots 
 - **A tab outlives its host.** A desktop that goes away has its tabs parked after a short grace, and a server tab unused and unwatched for a few minutes is parked too. A parked tab keeps its ref and its address, and opens again where tabs open now when a bot uses it; the bot is told the page was opened again.
 - **Local mode** uses the desktop app's browser only. It never starts one on the server.
 - Both hosts ship in 0.16.
-- **The server's browser is full Chrome for Testing** in its new headless mode. It is not `chrome-headless-shell`, which sites can tell from Chrome. The server downloads it on first use into J3 Bots' own home. Each platform's version and SHA-256 are pinned. It renders at a device scale factor of 1.
+- **The server's browser is full Chrome for Testing** in its new headless mode. It is not `chrome-headless-shell`, which sites can tell from Chrome. The server downloads it on first use into J3 Bots' own home. Playwright, which drives it, reads its own files from beside its modules, so the server build carries it as a package in `node_modules/` beside the bundle instead of bundling it. Each platform's version and SHA-256 are pinned. It renders at a device scale factor of 1.
 - **Each host shows sites an honest identity:** Chrome of its own major version, on its own system, with the Google Chrome brand and client hints. The desktop drops `Electron` and the app's name from its user agent.
 
 ### Shared tabs

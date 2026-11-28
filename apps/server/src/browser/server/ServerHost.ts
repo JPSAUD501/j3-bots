@@ -235,6 +235,8 @@ export const launchServerHost = (input: {
     if (!browser.isConnected()) Deferred.doneUnsafe(disconnected, Exit.void);
     const tabs = new Map<BrowserTabRef, Tab>();
     const drivers = new Map<BrowserTabRef, DriverPage>();
+    /** The tabs being opened, for an open of the same ref meanwhile. */
+    const opening = new Map<BrowserTabRef, Deferred.Deferred<DriverPage, BrowserHostError>>();
     /** Downloads reported and not taken yet. */
     const downloads = new Map<BrowserDownloadId, Download>();
     /** Runs a page's callback's work in the host's scope. */
@@ -448,8 +450,21 @@ export const launchServerHost = (input: {
         });
       const existing = tabs.get(request.tab);
       if (existing !== undefined) return yield* existing.driver.state;
-      const page = yield* send(() => context.newPage());
-      const driver = yield* adopt(request.tab, page);
+      // A second open of a ref while the first runs gets that tab, not a page of its own.
+      const inFlight = opening.get(request.tab);
+      if (inFlight !== undefined)
+        return yield* Effect.flatMap(Deferred.await(inFlight), (driver) => driver.state);
+      const made = Deferred.makeUnsafe<DriverPage, BrowserHostError>();
+      opening.set(request.tab, made);
+      const driver = yield* send(() => context.newPage()).pipe(
+        Effect.flatMap((page) => adopt(request.tab, page)),
+        Effect.onExit((exit) =>
+          Effect.sync(() => {
+            opening.delete(request.tab);
+            Deferred.doneUnsafe(made, exit);
+          }),
+        ),
+      );
       if (request.url === undefined) return yield* driver.state;
       return yield* driver.navigate(
         { kind: "url", url: request.url },

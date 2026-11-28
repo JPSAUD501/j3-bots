@@ -8,7 +8,13 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Option from "effect/Option";
 import { chromeFolders, chromePlatformOf } from "./chrome.ts";
-import { apparmorProfile, inspectBrowserHost, missingLibrariesOf, setupOf } from "./hostNeeds.ts";
+import {
+  apparmorProfile,
+  inspectBrowserHost,
+  missingLibrariesOf,
+  offeredPackagesOf,
+  setupOf,
+} from "./hostNeeds.ts";
 
 describe("the server browser's host setup", () => {
   it("writes, through sudo tee, exactly the profile it shows", () => {
@@ -76,6 +82,28 @@ describe("the server browser's host setup", () => {
     ].join("\n");
     assert.deepStrictEqual(missingLibrariesOf("libnss3.so", ldd), ["libnss3.so", "libgbm.so.1"]);
     assert.deepStrictEqual(missingLibrariesOf("$(reboot).so", ""), []);
+  });
+
+  it("reads which of several packages apt offers from one apt-cache run", () => {
+    const policy = [
+      "libasound2t64:",
+      "  Installed: (none)",
+      "  Candidate: 1.2.11-1build2",
+      "  Version table:",
+      "     1.2.11-1build2 500",
+      "        500 http://archive.example/ubuntu noble/main amd64 Packages",
+      "libasound2:",
+      "  Installed: (none)",
+      "  Candidate: (none)",
+      "  Version table:",
+      "libnss3:",
+      "  Installed: 2:3.98-1build1",
+      "  Candidate: 2:3.98-1build1",
+      "  Version table:",
+      " *** 2:3.98-1build1 500",
+      "        100 /var/lib/dpkg/status",
+    ].join("\n");
+    assert.deepStrictEqual([...offeredPackagesOf(policy)], ["libasound2t64", "libnss3"]);
   });
 
   const platform = Option.getOrUndefined(chromePlatformOf(process.platform, process.arch));

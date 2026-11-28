@@ -26,6 +26,9 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 // server's fill of a saved login is a holder too, after a person and before
 // bots. Each change of hands moves the tab's `epoch`.
 
+/** What `Effect.uninterruptibleMask` gives: makes an effect interruptible again. */
+type Restore = <X, Y, Z>(effect: Effect.Effect<X, Y, Z>) => Effect.Effect<X, Y, Z>;
+
 /** How long a bot keeps a tab's lease after its action ends. */
 export const BOT_LEASE = Duration.seconds(5);
 /** How long a bot's action waits in a tab's queue before it fails. */
@@ -158,6 +161,8 @@ export const makeTabControl: Effect.Effect<TabControl, never, Scope.Scope> = Eff
     /** The fill whose work runs now, done once it ends. */
     let filling: Deferred.Deferred<void> | null = null;
     let acting: BotId | null = null;
+    /** Whether the acting bot was withdrawn while its action ran: it keeps no lease after it. */
+    let actingWithdrawn = false;
     let epoch = 0;
     let closed = false;
     const queue: Array<Waiter> = [];
@@ -230,65 +235,76 @@ export const makeTabControl: Effect.Effect<TabControl, never, Scope.Scope> = Eff
     ) {
       const deadline = (yield* now) + Duration.toMillis(QUEUE_WAIT);
       let waiter: Waiter | null = null;
-      const entered = Effect.gen(function* () {
-        for (;;) {
-          const at = yield* now;
-          lapse(at);
-          // The decision and the queueing happen in one step, so no change
-          // can slip between them unseen.
-          const decision = ((): ActRefused | "go" | number => {
-            if (closed) return new ActRefused({ reason: "closed" });
-            if (holder?.kind === "person")
-              return new ActRefused({ reason: holder.until === null ? "waiting" : "person" });
-            const fillAhead = queue.some((queued) => queued.kind === "fill");
-            const firstBot = queue.find((queued) => queued.kind === "bot");
-            // The lease's bot goes on during it; the next turn is the queue's first.
-            const leased = holder?.kind === "bot" && holder.botId === botId;
-            const ownTurn = leased || firstBot === undefined || firstBot === waiter;
-            const free = acting === null && !fillAhead && ownTurn && (holder === null || leased);
-            if (free) return "go";
-            const blocker =
-              acting ?? (holder?.kind === "bot" ? holder.botId : null) ?? firstBot?.botId ?? null;
-            if (at >= deadline)
-              return new ActRefused(
-                blocker === null ? { reason: "bot" } : { reason: "bot", botId: blocker },
-              );
-            if (waiter === null) {
-              waiter = { kind: "bot", botId, wake: Deferred.makeUnsafe() };
-              queue.push(waiter);
-            } else {
-              waiter.wake = Deferred.makeUnsafe();
+      // The lease is granted and its release installed in one step that
+      // cannot be interrupted, so no interruption leaves the tab held. Only
+      // the waits and the action itself can be.
+      const entered = Effect.fnUntraced(
+        function* (restore: Restore) {
+          for (;;) {
+            const at = yield* now;
+            lapse(at);
+            // The decision and the queueing happen in one step, so no change
+            // can slip between them unseen.
+            const decision = ((): ActRefused | "go" | number => {
+              if (closed) return new ActRefused({ reason: "closed" });
+              if (holder?.kind === "person")
+                return new ActRefused({ reason: holder.until === null ? "waiting" : "person" });
+              const fillAhead = queue.some((queued) => queued.kind === "fill");
+              const firstBot = queue.find((queued) => queued.kind === "bot");
+              // The lease's bot goes on during it; the next turn is the queue's first.
+              const leased = holder?.kind === "bot" && holder.botId === botId;
+              const ownTurn = leased || firstBot === undefined || firstBot === waiter;
+              const free = acting === null && !fillAhead && ownTurn && (holder === null || leased);
+              if (free) return "go";
+              const blocker =
+                acting ?? (holder?.kind === "bot" ? holder.botId : null) ?? firstBot?.botId ?? null;
+              if (at >= deadline)
+                return new ActRefused(
+                  blocker === null ? { reason: "bot" } : { reason: "bot", botId: blocker },
+                );
+              if (waiter === null) {
+                waiter = { kind: "bot", botId, wake: Deferred.makeUnsafe() };
+                queue.push(waiter);
+              } else {
+                waiter.wake = Deferred.makeUnsafe();
+              }
+              const lapsesAt =
+                holder?.kind === "bot" && holder.botId !== acting ? holder.until : deadline;
+              return Math.min(deadline, lapsesAt) - at;
+            })();
+            if (decision === "go") {
+              dequeue(waiter);
+              setHolder({ kind: "bot", botId, until: at + Duration.toMillis(BOT_LEASE) });
+              acting = botId;
+              actingWithdrawn = false;
+              yield* changed;
+              return;
             }
-            const lapsesAt =
-              holder?.kind === "bot" && holder.botId !== acting ? holder.until : deadline;
-            return Math.min(deadline, lapsesAt) - at;
-          })();
-          if (decision === "go") {
-            dequeue(waiter);
-            setHolder({ kind: "bot", botId, until: at + Duration.toMillis(BOT_LEASE) });
-            acting = botId;
-            yield* changed;
-            return;
+            if (typeof decision !== "number") {
+              dequeue(waiter);
+              yield* changed;
+              return yield* decision;
+            }
+            if (waiter !== null) yield* restore(awaitChange(waiter, decision));
           }
-          if (typeof decision !== "number") {
-            dequeue(waiter);
-            yield* changed;
-            return yield* decision;
-          }
-          if (waiter !== null) yield* awaitChange(waiter, decision);
+        },
+        Effect.onInterrupt(() => Effect.sync(() => dequeue(waiter))),
+      );
+      const ended = Effect.gen(function* () {
+        acting = null;
+        if (holder?.kind === "bot" && holder.botId === botId) {
+          // A bot withdrawn while it acted keeps no lease after.
+          setHolder(
+            actingWithdrawn
+              ? null
+              : { kind: "bot", botId, until: (yield* now) + Duration.toMillis(BOT_LEASE) },
+          );
         }
-      }).pipe(Effect.onInterrupt(() => Effect.sync(() => dequeue(waiter))));
-      yield* entered;
-      return yield* run.pipe(
-        Effect.ensuring(
-          Effect.gen(function* () {
-            acting = null;
-            if (holder?.kind === "bot" && holder.botId === botId) {
-              holder = { kind: "bot", botId, until: (yield* now) + Duration.toMillis(BOT_LEASE) };
-            }
-            yield* changed;
-          }),
-        ),
+        actingWithdrawn = false;
+        yield* changed;
+      });
+      return yield* Effect.uninterruptibleMask((restore) =>
+        Effect.andThen(entered(restore), restore(run).pipe(Effect.ensuring(ended))),
       );
     });
 
@@ -329,70 +345,79 @@ export const makeTabControl: Effect.Effect<TabControl, never, Scope.Scope> = Eff
       run: (stillHeld: Effect.Effect<void, FillRefused>) => Effect.Effect<A, E, R>,
     ) {
       let waiter: Waiter | null = null;
-      const entered = Effect.gen(function* () {
-        for (;;) {
-          lapse(yield* now);
-          const decision = ((): FillRefused | "go" | "wait" => {
-            if (closed) return new FillRefused({ reason: "closed" });
-            if (holder?.kind === "person") return new FillRefused({ reason: "person" });
-            if (acting === null && holder?.kind !== "fill") return "go";
-            if (waiter === null) {
-              waiter = { kind: "fill", botId: null, wake: Deferred.makeUnsafe() };
-              queue.unshift(waiter);
-            } else {
-              waiter.wake = Deferred.makeUnsafe();
+      // Granted, and its release installed, in one step, as a bot's lease is.
+      const entered = Effect.fnUntraced(
+        function* (restore: Restore) {
+          for (;;) {
+            lapse(yield* now);
+            const decision = ((): FillRefused | "go" | "wait" => {
+              if (closed) return new FillRefused({ reason: "closed" });
+              if (holder?.kind === "person") return new FillRefused({ reason: "person" });
+              if (acting === null && holder?.kind !== "fill") return "go";
+              if (waiter === null) {
+                waiter = { kind: "fill", botId: null, wake: Deferred.makeUnsafe() };
+                queue.unshift(waiter);
+              } else {
+                waiter.wake = Deferred.makeUnsafe();
+              }
+              return "wait";
+            })();
+            if (decision === "go") {
+              dequeue(waiter);
+              setHolder({ kind: "fill" });
+              yield* changed;
+              return;
             }
-            return "wait";
-          })();
-          if (decision === "go") {
-            dequeue(waiter);
-            setHolder({ kind: "fill" });
-            yield* changed;
-            return;
-          }
-          if (decision !== "wait") {
-            dequeue(waiter);
-            yield* changed;
-            return yield* decision;
-          }
-          if (waiter !== null)
-            yield* Deferred.await(waiter.wake).pipe(
-              Effect.catchTag("ActRefused", (refused) =>
-                Effect.fail(
-                  new FillRefused({
-                    reason:
-                      refused.reason === "person" || refused.reason === "waiting"
-                        ? "person"
-                        : "closed",
-                  }),
+            if (decision !== "wait") {
+              dequeue(waiter);
+              yield* changed;
+              return yield* decision;
+            }
+            if (waiter !== null)
+              yield* restore(Deferred.await(waiter.wake)).pipe(
+                Effect.catchTag("ActRefused", (refused) =>
+                  Effect.fail(
+                    new FillRefused({
+                      reason:
+                        refused.reason === "person" || refused.reason === "waiting"
+                          ? "person"
+                          : "closed",
+                    }),
+                  ),
                 ),
-              ),
-            );
-        }
-      }).pipe(Effect.onInterrupt(() => Effect.sync(() => dequeue(waiter))));
-      yield* entered;
+              );
+          }
+        },
+        Effect.onInterrupt(() => Effect.sync(() => dequeue(waiter))),
+      );
       const stillHeld = Effect.suspend(() =>
         holder?.kind === "fill"
           ? Effect.void
           : Effect.fail(new FillRefused({ reason: closed ? "closed" : "person" })),
       );
-      const done = Deferred.makeUnsafe<void>();
-      filling = done;
-      return yield* run(stillHeld).pipe(
-        Effect.ensuring(
-          Effect.suspend(() => {
-            if (filling === done) filling = null;
-            Deferred.doneUnsafe(done, Exit.void);
-            if (holder?.kind === "fill") setHolder(null);
-            return changed;
-          }),
-        ),
+      return yield* Effect.uninterruptibleMask((restore) =>
+        Effect.gen(function* () {
+          yield* entered(restore);
+          const done = Deferred.makeUnsafe<void>();
+          filling = done;
+          return yield* restore(run(stillHeld)).pipe(
+            Effect.ensuring(
+              Effect.suspend(() => {
+                if (filling === done) filling = null;
+                Deferred.doneUnsafe(done, Exit.void);
+                if (holder?.kind === "fill") setHolder(null);
+                return changed;
+              }),
+            ),
+          );
+        }),
       );
     });
 
     const withdraw = (botId: BotId) =>
       Effect.suspend(() => {
         if (holder?.kind === "bot" && holder.botId === botId && acting !== botId) setHolder(null);
+        if (acting === botId) actingWithdrawn = true;
         refuseWaiting((waiter) =>
           waiter.botId === botId ? new ActRefused({ reason: "withdrawn" }) : null,
         );

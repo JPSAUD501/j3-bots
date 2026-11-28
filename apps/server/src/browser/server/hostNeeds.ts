@@ -204,6 +204,29 @@ const installedBrowser = Effect.fn("browser.installedBrowser")(function* (home: 
 });
 
 /**
+ * The packages `apt-cache policy` offers a version of, from what it printed
+ * for several names in the C locale: each name heads its block, as
+ * `<name>:`, and a block whose `Candidate:` is `(none)` is one apt cannot
+ * install. A name apt does not know prints no block.
+ */
+export const offeredPackagesOf = (policy: string): ReadonlySet<string> => {
+  const offered = new Set<string>();
+  let current: string | undefined;
+  for (const line of policy.split("\n")) {
+    const heading = /^(\S+):$/.exec(line)?.[1];
+    if (heading !== undefined) {
+      current = heading;
+      continue;
+    }
+    const candidate = /^\s+Candidate:\s*(\S+)/.exec(line)?.[1];
+    if (current !== undefined && candidate !== undefined && candidate !== "(none)") {
+      offered.add(current);
+    }
+  }
+  return offered;
+};
+
+/**
  * What the server's browser needs from this Linux host, for the server's
  * `home`. `sandboxRefused`: the server found the sandbox blocked when it last
  * started the browser, which the files here may not show.
@@ -214,11 +237,21 @@ export const inspectBrowserHost = Effect.fn("browser.inspectBrowserHost")(functi
 }) {
   const fs = yield* FileSystem.FileSystem;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  // In the C locale, as the output is read for words a translation would change.
   const output = (command: string, args: ReadonlyArray<string>, includeStderr: boolean) =>
-    spawner.string(ChildProcess.make(command, args, { stdin: "ignore" }), { includeStderr }).pipe(
-      Effect.timeout("5 seconds"),
-      Effect.orElseSucceed(() => ""),
-    );
+    spawner
+      .string(
+        ChildProcess.make(command, args, {
+          stdin: "ignore",
+          env: { LC_ALL: "C" },
+          extendEnv: true,
+        }),
+        { includeStderr },
+      )
+      .pipe(
+        Effect.timeout("5 seconds"),
+        Effect.orElseSucceed(() => ""),
+      );
 
   const restricted = yield* fs.readFileString(USERNS_RESTRICTION).pipe(
     Effect.map((value) => value.trim() === "1"),
@@ -248,24 +281,15 @@ export const inspectBrowserHost = Effect.fn("browser.inspectBrowserHost")(functi
     : input.sandboxRefused
       ? "unknown"
       : "none";
-  // apt-cache reads the package lists without root.
-  const offered = (name: string) =>
-    output("apt-cache", ["policy", name], false).pipe(
-      Effect.map((policy) => {
-        const candidate = /Candidate:\s*(\S+)/.exec(policy)?.[1];
-        return candidate !== undefined && candidate !== "(none)";
-      }),
-    );
+  // apt-cache reads the package lists without root, every name in one run.
+  const debianLibraries = output("apt-cache", ["policy", ...DEBIAN_PACKAGES.flat()], false).pipe(
+    Effect.map((policy) => {
+      const offered = offeredPackagesOf(policy);
+      return DEBIAN_PACKAGES.map((names) => names.find((name) => offered.has(name)) ?? names[0]);
+    }),
+  );
   const packageManager: PackageManager = (yield* exists("/usr/bin/apt-get"))
-    ? {
-        _tag: "apt-get",
-        libraries:
-          missingLibraries.length === 0
-            ? []
-            : yield* Effect.forEach(DEBIAN_PACKAGES, (names) =>
-                Effect.findFirst(names, offered).pipe(Effect.map(Option.getOrElse(() => names[0]))),
-              ),
-      }
+    ? { _tag: "apt-get", libraries: missingLibraries.length === 0 ? [] : yield* debianLibraries }
     : (yield* exists("/usr/bin/dnf"))
       ? { _tag: "dnf" }
       : { _tag: "none" };

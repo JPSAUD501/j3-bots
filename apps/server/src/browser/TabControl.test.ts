@@ -220,3 +220,18 @@ it.effect(
       yield* control.afterFill;
     }).pipe(Effect.scoped),
 );
+
+it.effect("leaves no lease to a bot withdrawn while its action ran", () =>
+  Effect.gen(function* () {
+    const control = yield* makeTabControl;
+    const gate = yield* Deferred.make<void>();
+    const running = yield* control.act(ana, Deferred.await(gate)).pipe(Effect.forkChild);
+    yield* Effect.yieldNow;
+    yield* control.withdraw(ana);
+    yield* Deferred.succeed(gate, undefined);
+    yield* Fiber.join(running);
+    assert.isNull((yield* control.state).holder);
+    // Another bot acts at once, with no lease to wait out.
+    yield* control.act(leo, Effect.void);
+  }).pipe(Effect.scoped),
+);

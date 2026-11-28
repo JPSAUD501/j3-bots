@@ -4,12 +4,13 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import { whatsNewOf } from "@j3-bots/release";
 import { defineConfig, type Plugin } from "vite-plus";
-import { bundleInputs } from "../../scripts/bundle-inputs.ts";
+import { bundleInputs, carriedPackages } from "../../scripts/bundle-inputs.ts";
 import packageJson from "./package.json" with { type: "json" };
 
 // The production build (`vp pack`, tsdown), after T3 Code's: one ESM file per
-// entry with every dependency bundled in, so `dist/` runs on Node with no
-// `node_modules`. SQLite is Node's own. Tests use the root configuration.
+// entry with every dependency bundled in but those in CARRIED, so `dist/`
+// runs on Node with only the `node_modules` it holds itself. SQLite is Node's
+// own. Tests use the root configuration.
 
 /**
  * `@j3-bots/prompts` reads its templates from `./templates/` and its skills
@@ -55,6 +56,14 @@ const releaseNotes = (): Plugin => ({
 /** Native accelerators `ws` loads when they are installed, and works without. */
 const OPTIONAL_NATIVE = ["bufferutil", "utf-8-validate"];
 
+/**
+ * Packages carried beside the bundle, in `dist/node_modules/`, rather than
+ * bundled: Playwright, which drives the server's browser, reads its own
+ * files (its package.json, its browser list, its injected scripts) from
+ * beside its modules at run time.
+ */
+const CARRIED = ["playwright-core"];
+
 export default defineConfig({
   pack: {
     // `src/installation.ts` names these outputs for the bundled build.
@@ -67,8 +76,9 @@ export default defineConfig({
     dts: false,
     clean: true,
     deps: {
-      alwaysBundle: (id) => !id.startsWith("node:") && !OPTIONAL_NATIVE.includes(id),
-      neverBundle: OPTIONAL_NATIVE,
+      alwaysBundle: (id) =>
+        !id.startsWith("node:") && !OPTIONAL_NATIVE.includes(id) && !CARRIED.includes(id),
+      neverBundle: [...OPTIONAL_NATIVE, ...CARRIED],
       onlyBundle: false,
     },
     copy: [
@@ -78,6 +88,6 @@ export default defineConfig({
     banner: { js: "#!/usr/bin/env node" },
     // What the release's third-party notices are made from (scripts/build-release.ts),
     // and the release the j3-app skill describes.
-    plugins: [bundleInputs("server"), releaseNotes()],
+    plugins: [bundleInputs("server"), carriedPackages("server", CARRIED), releaseNotes()],
   },
 });

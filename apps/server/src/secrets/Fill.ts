@@ -246,7 +246,15 @@ export const layer = Layer.effect(
           url,
           submit: request.submit || request.field === "password",
         })
-        .pipe(Effect.mapError(() => refused("unavailable")));
+        .pipe(
+          // Its reason only: the detail of a page's failure could quote the field.
+          Effect.tapError((error) =>
+            Effect.logWarning(
+              "A browser host did not finish a login fill; the value may be in the field",
+            ).pipe(Effect.annotateLogs({ reason: error.reason })),
+          ),
+          Effect.mapError(() => refused("unavailable")),
+        );
       if (typed._tag === "refused") return yield* refused(typed.reason);
       seen.typed = true;
       return { submitted: typed.submitted };
