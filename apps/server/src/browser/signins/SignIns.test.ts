@@ -485,6 +485,39 @@ it.layer(NodeServices.layer)("the shared sign-ins", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("an origin whose databases a host cannot read is left as it is, on both sides", () =>
+    Effect.gen(function* () {
+      const signIns = yield* signInsIn();
+      const kept: BrowserOriginStorage = {
+        ...stored("https://app.x.test", "t1"),
+        indexedDb: [{ name: "auth", version: 1, stores: [] }],
+      };
+      yield* signIns.bringIn({
+        cookies: [],
+        origins: [{ indexedDb: true, storage: kept }],
+        sites: [],
+      });
+      const server = yield* host({ ...READ_ONLY_AGAIN, indexedDb: true });
+      const onServer = yield* attach(signIns, server);
+      yield* onServer.prepare(`${kept.origin}/`);
+      assert.deepStrictEqual(yield* server.storage, [kept]);
+
+      // The site stores a value the host's read cannot carry, so the host
+      // gives the origin without its databases, as often as it is read.
+      const unreadable = stored(kept.origin, "t2");
+      yield* server.siteStorage(unreadable);
+      yield* visits(onServer, `${kept.origin}/`);
+      yield* onServer.flush;
+      yield* onServer.flush;
+      assert.deepStrictEqual(yield* server.storage, [unreadable]);
+
+      const desktop = yield* host({ ...EVENTS, indexedDb: true }, "store-a-0000000000");
+      const onDesktop = yield* attach(signIns, desktop);
+      yield* onDesktop.prepare(`${kept.origin}/`);
+      assert.deepStrictEqual(yield* desktop.storage, [kept]);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("signing out of all sites empties every host it can reach, and the jar", () =>
     Effect.gen(function* () {
       const signIns = yield* signInsIn();

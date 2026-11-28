@@ -734,13 +734,13 @@ export const makeSignIns = Effect.fn("SignIns.make")(function* (
         a.host.readStorage({ origins: batch, indexedDb }),
       );
       if (Option.isNone(read)) return Option.none<typeof reads>();
-      for (const origin of batch)
-        reads.push({
-          indexedDb,
-          read:
-            read.value.origins.find((held) => held.origin === origin) ??
-            storageView(emptyStorage(origin), indexedDb),
-        });
+      for (const origin of batch) {
+        const held = read.value.origins.find((each) => each.origin === origin);
+        // Databases asked for and not read hold what the host could not give:
+        // the origin is left as it is, on both sides, until it can be read.
+        if (indexedDb && held !== undefined && held.indexedDb === undefined) continue;
+        reads.push({ indexedDb, read: held ?? storageView(emptyStorage(origin), indexedDb) });
+      }
     }
     return Option.some(reads);
   });

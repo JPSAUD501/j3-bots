@@ -172,4 +172,51 @@ describe.skipIf(executablePath === undefined)("a sign-in kept in IndexedDB", () 
       }).pipe(Effect.scoped, Effect.provide([NodeServices.layer, NodeHttpServer.layerTest])),
     120_000,
   );
+
+  it.live(
+    "at a new version waits until no tab of the site can hold its database open",
+    () =>
+      Effect.gen(function* () {
+        if (executablePath === undefined) return;
+        const origin = yield* appSite;
+        const host = yield* launchServerHost({ executable: executablePath, platform: "linux64" });
+        const tab = BrowserTabRef.make("tab-1");
+        // The app's page opens its database, at version 1, and never lets go.
+        yield* host.open({ tab, url: `${origin}/`, background: true, private: false });
+        assert.strictEqual(yield* stateOf(host, tab), "Signed out");
+
+        const upgraded = {
+          origin,
+          localStorage: [],
+          indexedDb: [
+            {
+              name: DATABASE,
+              version: 2,
+              stores: [
+                {
+                  name: STORE,
+                  autoIncrement: false,
+                  keyPath: "fbase_key",
+                  records: [
+                    { value: { fbase_key: "moved", value: { email: "moved@example.test" } } },
+                  ],
+                  indexes: [],
+                },
+              ],
+            },
+          ],
+        };
+        const refused = yield* Effect.exit(host.writeStorage([upgraded]));
+        assert.isTrue(Exit.isFailure(refused));
+
+        yield* host.close(tab);
+        yield* host.writeStorage([upgraded]);
+        const { origins } = yield* host.readStorage({ origins: [origin], indexedDb: true });
+        assert.deepStrictEqual(
+          origins.map(({ indexedDb }) => indexedDb),
+          [upgraded.indexedDb],
+        );
+      }).pipe(Effect.scoped, Effect.provide([NodeServices.layer, NodeHttpServer.layerTest])),
+    120_000,
+  );
 });

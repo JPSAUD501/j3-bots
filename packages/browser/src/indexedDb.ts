@@ -11,8 +11,14 @@
 // - Only IndexedDB: `localStorage` and the rest are the host's own calls.
 // - A database of the same version and shape as the one written is emptied
 //   and filled again in one transaction, not deleted, so a page of the origin
-//   that holds it open does not stop the write. Deleting a database a page
-//   holds open fails the write at once, rather than waiting on the page.
+//   that holds it open does not stop the write. A write that needs a version
+//   change (a delete, or an open at another version) is made only when the
+//   caller says nothing can hold one back, and otherwise changes nothing.
+//   An upgrade fills its stores in the version change's own transaction,
+//   and every record is decoded first, so a failure leaves the database as
+//   it was.
+// - Reading never makes a database, and a value the encoding cannot carry
+//   (a `CryptoKey`, a `Blob`) leaves the origin unread, not read wrong.
 // - A number JSON cannot hold (`NaN`, the infinities, `-0`) and a value met
 //   twice are encoded, so what comes back as plain JSON is plain JSON.
 // - Values are told apart in the page's own realm (`instanceof`), as they
@@ -43,6 +49,8 @@ interface PageRequest<T> {
 }
 
 interface PageOpenRequest<T> extends PageRequest<T> {
+  /** The version change's transaction, while `onupgradeneeded` runs. */
+  readonly transaction: PageTransaction | null;
   onupgradeneeded: (() => void) | null;
   onblocked: (() => void) | null;
 }
@@ -78,15 +86,18 @@ interface PageTransaction {
   oncomplete: (() => void) | null;
   onerror: (() => void) | null;
   onabort: (() => void) | null;
+  abort(): void;
 }
 
 interface PageDatabase {
+  readonly version: number;
   readonly objectStoreNames: PageNameList;
   transaction(names: ReadonlyArray<string>, mode: "readonly" | "readwrite"): PageTransaction;
   createObjectStore(
     name: string,
     options: { readonly autoIncrement: boolean; readonly keyPath?: PageKeyPath },
   ): PageObjectStore;
+  deleteObjectStore(name: string): void;
   close(): void;
 }
 
@@ -128,8 +139,19 @@ export interface DatabaseDump {
   }>;
 }
 
+/**
+ * What `readDatabases` found: every database of the origin, or that one of
+ * them holds a value the encoding cannot carry (a `CryptoKey`, a `Blob`, a
+ * `DataView`), so none of them is read rather than read wrong.
+ */
+export type DatabasesRead =
+  | { readonly readable: true; readonly databases: ReadonlyArray<DatabaseDump> }
+  | { readonly readable: false };
+
 /** Every database of the page's origin, with every record, read in one transaction each. */
-export const readDatabases = async (): Promise<ReadonlyArray<DatabaseDump>> => {
+export const readDatabases = async (): Promise<DatabasesRead> => {
+  /** Whether a value the encoding cannot carry was met: then nothing is read. */
+  let unsupported = false;
   const settled = <T>(request: PageRequest<T>) =>
     new Promise<T>((resolve, reject) => {
       request.onsuccess = () => resolve(request.result);
@@ -236,9 +258,17 @@ export const readDatabases = async (): Promise<ReadonlyArray<DatabaseDump>> => {
       }
       if (Array.isArray(value)) {
         const items: ReadonlyArray<unknown> = value;
-        return { a: items.map(visit), id };
+        // By index, so a hole is encoded as undefined rather than skipped.
+        const encoded: Array<unknown> = [];
+        for (let index = 0; index < items.length; index++) encoded.push(visit(items[index]));
+        return { a: encoded, id };
       }
-      if (Object.getPrototypeOf(value) !== Object.prototype) plain = false;
+      // A `CryptoKey`, a `Blob`, a `DataView`, a class's instance: written back
+      // as an object of its fields, it would be another value.
+      if (Object.getPrototypeOf(value) !== Object.prototype) {
+        unsupported = true;
+        return { v: "undefined" };
+      }
       const fields: ReadonlyArray<readonly [string, unknown]> = Object.entries(value);
       return { o: fields.map(([k, item]) => ({ k, v: visit(item) })), id };
     };
@@ -254,14 +284,31 @@ export const readDatabases = async (): Promise<ReadonlyArray<DatabaseDump>> => {
     return plain ? { value } : { valueEncoded: encoded };
   };
 
+  /** Opens database `name` as it is, or undefined if it is gone: an open must not create one. */
+  const openExisting = (name: string) =>
+    new Promise<PageDatabase | undefined>((resolve, reject) => {
+      const request = indexedDB.open(name);
+      let created = false;
+      request.onupgradeneeded = () => {
+        created = true;
+        request.transaction?.abort();
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () =>
+        created
+          ? resolve(undefined)
+          : reject(new Error(request.error?.message ?? "IndexedDB failed."));
+    });
+
   const dumps: Array<DatabaseDump> = [];
   for (const info of await indexedDB.databases()) {
-    if (info.name === undefined || info.version === undefined) continue;
-    const db = await settled(indexedDB.open(info.name));
+    if (info.name === undefined) continue;
+    const db = await openExisting(info.name);
+    if (db === undefined) continue;
     try {
       const storeNames = names(db.objectStoreNames);
       if (storeNames.length === 0) {
-        dumps.push({ name: info.name, version: info.version, stores: [] });
+        dumps.push({ name: info.name, version: db.version, stores: [] });
         continue;
       }
       const transaction = db.transaction(storeNames, "readonly");
@@ -292,21 +339,38 @@ export const readDatabases = async (): Promise<ReadonlyArray<DatabaseDump>> => {
           };
         }),
       );
-      dumps.push({ name: info.name, version: info.version, stores });
+      dumps.push({ name: info.name, version: db.version, stores });
     } finally {
       db.close();
     }
   }
-  return dumps;
+  return unsupported ? { readable: false } : { readable: true, databases: dumps };
 };
+
+/**
+ * What `replaceDatabases` did. `version-change`: the databases differ by more
+ * than their records, so one must be deleted or opened at a new version,
+ * which a page of the origin holding it open would block; nothing was
+ * changed, and the host calls it again with `versionChanges` once nothing of
+ * the origin can hold one open.
+ */
+export type DatabasesWritten = "written" | "version-change";
 
 /**
  * Makes the page's origin hold exactly `databases`: every other database of
  * it is deleted, and each given one holds its records and nothing else.
+ * Every record is decoded and every database compared before anything is
+ * changed. A database of the same version and shape is emptied and filled
+ * in one transaction. One at a higher version is upgraded in place: its
+ * stores are replaced and filled in the version change's own transaction,
+ * so a failure leaves it as it was. Deleting, or a database at a lower
+ * version or of another shape, which is deleted and made again, happens only
+ * with `versionChanges`.
  */
-export const replaceDatabases = async (
-  databases: ReadonlyArray<BrowserIndexedDb>,
-): Promise<void> => {
+export const replaceDatabases = async (input: {
+  readonly databases: ReadonlyArray<BrowserIndexedDb>;
+  readonly versionChanges: boolean;
+}): Promise<DatabasesWritten> => {
   const settled = <T>(request: PageRequest<T>) =>
     new Promise<T>((resolve, reject) => {
       request.onsuccess = () => resolve(request.result);
@@ -367,6 +431,8 @@ export const replaceDatabases = async (
       }
     }
     if (typeof value["d"] === "string") return new Date(value["d"]);
+    // Playwright writes an invalid date as `{ d: null }`.
+    if ("d" in value && value["d"] === null) return new Date(NaN);
     if (typeof value["bi"] === "string") return BigInt(value["bi"]);
     const error = value["e"];
     if (isRecord(error)) {
@@ -420,7 +486,8 @@ export const replaceDatabases = async (
     return value;
   };
 
-  type Store = BrowserIndexedDb["stores"][number];
+  type Database = BrowserIndexedDb;
+  type Store = Database["stores"][number];
   const keyPathOf = (shape: {
     readonly keyPath?: string;
     readonly keyPathArray?: ReadonlyArray<string>;
@@ -433,39 +500,38 @@ export const replaceDatabases = async (
       b !== null &&
       a.join("\u0000") === b.join("\u0000"));
 
-  const remove = (name: string) =>
-    new Promise<void>((resolve, reject) => {
-      const request = indexedDB.deleteDatabase(name);
-      request.onsuccess = () => resolve();
-      request.onerror = () => reject(new Error(request.error?.message ?? "IndexedDB failed."));
-      request.onblocked = () => reject(new Error("A page of the origin holds a database open."));
-    });
+  /** A store's records, decoded before anything is written. */
+  interface Decoded {
+    readonly store: Store;
+    readonly records: ReadonlyArray<{ readonly value: unknown; readonly key: unknown }>;
+  }
+  const decoded = (database: Database): ReadonlyArray<Decoded> =>
+    database.stores.map((store) => ({
+      store,
+      records: store.records.map((record) => ({
+        value: "valueEncoded" in record ? decode(record.valueEncoded, new Map()) : record.value,
+        key: "keyEncoded" in record ? decode(record.keyEncoded, new Map()) : record.key,
+      })),
+    }));
 
-  /** Fills `db`, emptied first, with the records of `stores`, in one transaction. */
-  const fill = (db: PageDatabase, stores: ReadonlyArray<Store>) =>
-    new Promise<void>((resolve, reject) => {
-      if (stores.length === 0) return resolve();
-      const transaction = db.transaction(
-        stores.map((store) => store.name),
-        "readwrite",
-      );
-      transaction.oncomplete = () => resolve();
-      const failed = () =>
-        reject(new Error(transaction.error?.message ?? "The database could not be written."));
-      transaction.onerror = failed;
-      transaction.onabort = failed;
-      for (const store of stores) {
-        const objectStore = transaction.objectStore(store.name);
-        objectStore.clear();
-        for (const record of store.records) {
-          const value =
-            "valueEncoded" in record ? decode(record.valueEncoded, new Map()) : record.value;
-          const key = "keyEncoded" in record ? decode(record.keyEncoded, new Map()) : record.key;
+  /** Adds `stores`' records through `store`, rolling the transaction back on a throw. */
+  const addAll = (
+    transaction: PageTransaction,
+    stores: ReadonlyArray<Decoded>,
+    store: (decoded: Decoded) => PageObjectStore,
+  ) => {
+    try {
+      for (const each of stores) {
+        const objectStore = store(each);
+        for (const { value, key } of each.records)
           if (key === undefined) objectStore.add(value);
           else objectStore.add(value, key);
-        }
       }
-    });
+    } catch (error) {
+      transaction.abort();
+      throw error;
+    }
+  };
 
   /** Whether `db` has exactly the stores and indexes `wanted` has. */
   const sameShape = (db: PageDatabase, wanted: ReadonlyArray<Store>) => {
@@ -494,48 +560,174 @@ export const replaceDatabases = async (
     });
   };
 
-  const present = await indexedDB.databases();
-  const wanted = new Set(databases.map((database) => database.name));
-  for (const info of present)
-    if (info.name !== undefined && !wanted.has(info.name)) await remove(info.name);
+  /** Opens database `name` as it is, or undefined if it is gone: an open must not create one. */
+  const openExisting = (name: string) =>
+    new Promise<PageDatabase | undefined>((resolve, reject) => {
+      const request = indexedDB.open(name);
+      let created = false;
+      request.onupgradeneeded = () => {
+        created = true;
+        request.transaction?.abort();
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () =>
+        created
+          ? resolve(undefined)
+          : reject(new Error(request.error?.message ?? "IndexedDB failed."));
+    });
 
-  for (const database of databases) {
-    const current = present.find((info) => info.name === database.name);
-    if (current !== undefined && current.version === database.version) {
-      const db = await settled(indexedDB.open(database.name));
+  /**
+   * Deletes database `name`. A page that holds it open delays the delete
+   * until it lets go, and the delete cannot be called back, so this waits:
+   * the host asks for it only once nothing of the origin is open.
+   */
+  const remove = (name: string) =>
+    new Promise<void>((resolve, reject) => {
+      const request = indexedDB.deleteDatabase(name);
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(new Error(request.error?.message ?? "IndexedDB failed."));
+    });
+
+  /** Empties `db`'s stores and fills them again, in one transaction. */
+  const refill = (db: PageDatabase, stores: ReadonlyArray<Decoded>) =>
+    new Promise<void>((resolve, reject) => {
+      if (stores.length === 0) return resolve();
+      const transaction = db.transaction(
+        stores.map(({ store }) => store.name),
+        "readwrite",
+      );
+      transaction.oncomplete = () => resolve();
+      const failed = () =>
+        reject(new Error(transaction.error?.message ?? "The database could not be written."));
+      transaction.onerror = failed;
+      transaction.onabort = failed;
       try {
-        if (sameShape(db, database.stores)) {
-          await fill(db, database.stores);
-          continue;
-        }
-      } finally {
-        db.close();
+        for (const { store } of stores) transaction.objectStore(store.name).clear();
+        addAll(transaction, stores, ({ store }) => transaction.objectStore(store.name));
+      } catch (error) {
+        reject(error);
       }
-    }
-    if (current !== undefined) await remove(database.name);
-    const request = indexedDB.open(database.name, database.version);
-    request.onupgradeneeded = () => {
-      for (const store of database.stores) {
-        const keyPath = keyPathOf(store);
-        const objectStore = request.result.createObjectStore(store.name, {
-          autoIncrement: store.autoIncrement,
-          ...(keyPath === undefined ? {} : { keyPath }),
-        });
-        for (const index of store.indexes) {
-          const indexPath = keyPathOf(index);
-          if (indexPath !== undefined)
-            objectStore.createIndex(index.name, indexPath, {
-              unique: index.unique,
-              multiEntry: index.multiEntry,
+    });
+
+  /**
+   * Opens `database` at its version and, in the version change's own
+   * transaction, replaces whatever stores it had with its stores and
+   * records: all of it, or, on any failure, none of it.
+   */
+  const build = (database: Database, stores: ReadonlyArray<Decoded>) =>
+    new Promise<void>((resolve, reject) => {
+      const request = indexedDB.open(database.name, database.version);
+      let failure: unknown;
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        const transaction = request.transaction;
+        if (transaction === null) return;
+        try {
+          for (const name of names(db.objectStoreNames)) db.deleteObjectStore(name);
+          const created = new Map<Store, PageObjectStore>();
+          for (const { store } of stores) {
+            const keyPath = keyPathOf(store);
+            const objectStore = db.createObjectStore(store.name, {
+              autoIncrement: store.autoIncrement,
+              ...(keyPath === undefined ? {} : { keyPath }),
             });
+            for (const index of store.indexes) {
+              const indexPath = keyPathOf(index);
+              if (indexPath !== undefined)
+                objectStore.createIndex(index.name, indexPath, {
+                  unique: index.unique,
+                  multiEntry: index.multiEntry,
+                });
+            }
+            created.set(store, objectStore);
+          }
+          addAll(transaction, stores, ({ store }) => {
+            const objectStore = created.get(store);
+            if (objectStore === undefined) throw new Error("A store was not made.");
+            return objectStore;
+          });
+        } catch (error) {
+          failure = error;
+          transaction.abort();
         }
+      };
+      request.onsuccess = () => {
+        request.result.close();
+        resolve();
+      };
+      request.onerror = () =>
+        reject(
+          failure instanceof Error
+            ? failure
+            : new Error(request.error?.message ?? "The database could not be written."),
+        );
+    });
+
+  // Everything is read and compared first: nothing is changed until all of
+  // it is known to be possible.
+  type Step =
+    | {
+        readonly kind: "refill";
+        readonly database: Database;
+        readonly stores: ReadonlyArray<Decoded>;
       }
-    };
-    const db = await settled(request);
+    | {
+        readonly kind: "build";
+        readonly database: Database;
+        readonly stores: ReadonlyArray<Decoded>;
+      }
+    | {
+        readonly kind: "rebuild";
+        readonly database: Database;
+        readonly stores: ReadonlyArray<Decoded>;
+      }
+    | { readonly kind: "delete"; readonly name: string };
+  const steps: Array<Step> = [];
+  const present = await indexedDB.databases();
+  const wanted = new Set(input.databases.map((database) => database.name));
+  for (const info of present)
+    if (info.name !== undefined && !wanted.has(info.name))
+      steps.push({ kind: "delete", name: info.name });
+  for (const database of input.databases) {
+    const stores = decoded(database);
+    const db = present.some((info) => info.name === database.name)
+      ? await openExisting(database.name)
+      : undefined;
+    if (db === undefined) {
+      steps.push({ kind: "build", database, stores });
+      continue;
+    }
     try {
-      await fill(db, database.stores);
+      if (db.version === database.version && sameShape(db, database.stores))
+        steps.push({ kind: "refill", database, stores });
+      else if (db.version < database.version) steps.push({ kind: "build", database, stores });
+      else steps.push({ kind: "rebuild", database, stores });
     } finally {
       db.close();
     }
   }
+  // A new database at a higher version than one there is a version change too.
+  const changesVersions = steps.some(
+    (step) =>
+      step.kind === "delete" ||
+      step.kind === "rebuild" ||
+      (step.kind === "build" && present.some((info) => info.name === step.database.name)),
+  );
+  if (changesVersions && !input.versionChanges) return "version-change";
+
+  for (const step of steps) {
+    if (step.kind === "delete") await remove(step.name);
+    else if (step.kind === "refill") {
+      const db = await settled(indexedDB.open(step.database.name));
+      try {
+        await refill(db, step.stores);
+      } finally {
+        db.close();
+      }
+    } else {
+      if (step.kind === "rebuild") await remove(step.database.name);
+      await build(step.database, step.stores);
+    }
+  }
+  return "written";
 };

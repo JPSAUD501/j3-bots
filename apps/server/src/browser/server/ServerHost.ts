@@ -56,8 +56,13 @@ import { CHROME_VERSION, type ChromePlatform } from "./chrome.ts";
 /** Cookies as `Storage.getCookies` answers, each read by the shared mapping. */
 const CdpCookies = Schema.Struct({ cookies: Schema.Array(Schema.Unknown) });
 
-/** An origin's databases, as a page of it gave them. */
-const decodeDatabases = Schema.decodeUnknownEffect(Schema.Array(BrowserIndexedDb));
+/** An origin's databases as a page of it read them, or that it could not. */
+const decodeDatabasesRead = Schema.decodeUnknownEffect(
+  Schema.Union([
+    Schema.Struct({ readable: Schema.Literal(true), databases: Schema.Array(BrowserIndexedDb) }),
+    Schema.Struct({ readable: Schema.Literal(false) }),
+  ]),
+);
 
 /** What signing out clears of an origin besides cookies, as `Storage.clearDataForOrigin` names it. */
 const CLEARED_STORAGE = [
@@ -446,29 +451,46 @@ export const launchServerHost = (input: {
      * request it makes is answered with an empty page, past any service
      * worker of the origin, which would otherwise answer it before the route
      * (**Assumed**: `Network.setBypassServiceWorker` covers the navigation).
-     * What it reads and writes is the origin's own storage.
+     * What it reads and writes is the origin's own storage. A call that is
+     * interrupted, as one past its time is, closes the page, and what runs in
+     * it stops.
      */
-    const inProbe = <A>(origin: string, use: (page: Page) => Promise<A>) =>
-      send(async () => {
-        const page = await context.newPage();
-        try {
-          const cdp = await context.newCDPSession(page);
-          await cdp.send("Network.enable");
-          await cdp.send("Network.setBypassServiceWorker", { bypass: true });
-          await page.route("**/*", (route) =>
-            route.fulfill({ status: 200, contentType: "text/html", body: "<!doctype html>" }),
-          );
-          await page.goto(new URL("/", origin).toString(), { waitUntil: "domcontentloaded" });
-          return await use(page);
-        } finally {
-          await page.close();
-        }
+    const inProbe = <A>(origin: string, use: (page: Page, cdp: CDPSession) => Promise<A>) =>
+      Effect.tryPromise({
+        try: async (signal) => {
+          const page = await context.newPage();
+          const close = () => {
+            void page.close().catch(() => undefined);
+          };
+          signal.addEventListener("abort", close, { once: true });
+          try {
+            const cdp = await context.newCDPSession(page);
+            await cdp.send("Network.enable");
+            await cdp.send("Network.setBypassServiceWorker", { bypass: true });
+            await page.route("**/*", (route) =>
+              route.fulfill({ status: 200, contentType: "text/html", body: "<!doctype html>" }),
+            );
+            await page.goto(new URL("/", origin).toString(), { waitUntil: "domcontentloaded" });
+            return await use(page, cdp);
+          } finally {
+            signal.removeEventListener("abort", close);
+            await page.close();
+          }
+        },
+        catch: hostErrorOf,
       });
+
+    /** Whether a frame of a tab shows `origin`, so a page of it may hold its databases open. */
+    const showsOrigin = (origin: string) =>
+      [...tabs.values()].some(({ driver }) =>
+        driver.page.frames().some((frame) => webOriginOf(frame.url()) === origin),
+      );
 
     /**
      * Each origin's `localStorage`, and its databases when `indexedDb`: every
      * record of them, in the shape Playwright's `storageState` gives, read in
-     * the probe.
+     * the probe. An origin whose databases hold a value that shape cannot
+     * carry comes back without them.
      */
     const readStorage = (input: PageHostPayload<"storage.read">) =>
       Effect.forEach(input.origins, (origin) =>
@@ -484,15 +506,15 @@ export const launchServerHost = (input: {
           Effect.flatMap(({ localStorage, databases }) =>
             databases === undefined
               ? Effect.succeed<BrowserOriginStorage>({ origin, localStorage })
-              : decodeDatabases(databases).pipe(
+              : decodeDatabasesRead(databases).pipe(
                   Effect.mapError(
                     () => new BrowserHostError({ reason: "page", detail: "Unreadable databases." }),
                   ),
-                  Effect.map((indexedDb): BrowserOriginStorage => ({
-                    origin,
-                    localStorage,
-                    indexedDb,
-                  })),
+                  Effect.map((read): BrowserOriginStorage =>
+                    read.readable
+                      ? { origin, localStorage, indexedDb: read.databases }
+                      : { origin, localStorage },
+                  ),
                 ),
           ),
         ),
@@ -500,18 +522,36 @@ export const launchServerHost = (input: {
 
     /**
      * Replaces each origin's `localStorage`, and its databases where given,
-     * from the probe. A database of the same version and shape is emptied and
-     * filled again in place, so a tab of the origin that holds it open does
-     * not stop the write; one a tab holds open that must be deleted fails it,
-     * and the sign-ins try again later.
+     * from the probe. Databases that differ only in their records are filled
+     * again in place, past a tab of the origin that holds them open. One that
+     * must be deleted, or opened at another version, waits until no tab
+     * shows the origin, so no page of it can hold the change back: until then
+     * the write fails, and the sign-ins try again later. Before that change
+     * the origin's service workers are stopped, as they may hold one open
+     * too (**Assumed**: nothing else of a context does).
      */
     const writeStorage = (origins: ReadonlyArray<BrowserOriginStorage>) =>
       Effect.forEach(
         origins,
         (stored) =>
-          inProbe(stored.origin, async (page) => {
-            if (stored.indexedDb !== undefined)
-              await page.evaluate(replaceDatabases, stored.indexedDb);
+          inProbe(stored.origin, async (page, cdp) => {
+            const databases = stored.indexedDb;
+            if (databases !== undefined) {
+              const written = await page.evaluate(replaceDatabases, {
+                databases,
+                versionChanges: false,
+              });
+              if (written === "version-change") {
+                if (showsOrigin(stored.origin))
+                  throw new BrowserHostError({
+                    reason: "page",
+                    detail: "A tab of the origin may hold its databases open.",
+                  });
+                await cdp.send("ServiceWorker.enable");
+                await cdp.send("ServiceWorker.stopAllWorkers");
+                await page.evaluate(replaceDatabases, { databases, versionChanges: true });
+              }
+            }
             await page.evaluate((items) => {
               localStorage.clear();
               for (const item of items) localStorage.setItem(item.name, item.value);

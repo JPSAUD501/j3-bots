@@ -640,7 +640,11 @@ export const BrowserHostRpcs = RpcGroup.make(
     payload: { changes: BrowserCookieChanges },
     error: BrowserHostError,
   }),
-  /** Reads origins' storage; `indexedDb` adds their databases. */
+  /**
+   * Reads origins' storage; `indexedDb` adds their databases. An origin whose
+   * databases hold a value `BrowserIndexedDb` cannot carry (a `CryptoKey`, a
+   * `Blob`) comes back without `indexedDb`: not read, rather than read wrong.
+   */
   Rpc.make("storage.read", {
     payload: { origins: Schema.Array(Schema.String), indexedDb: Schema.Boolean },
     success: Schema.Struct({ origins: Schema.Array(BrowserOriginStorage) }),

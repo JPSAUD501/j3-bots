@@ -16,7 +16,24 @@ const executablePath = process.env["J3_TEST_CHROMIUM"];
 /** A fake site, answered by the test itself: nothing leaves the machine. */
 const SITE = "http://app.test";
 
-const decodeDatabases = Schema.decodeUnknownEffect(Schema.Array(BrowserIndexedDb));
+const decodeRead = Schema.decodeUnknownEffect(
+  Schema.Union([
+    Schema.Struct({ readable: Schema.Literal(true), databases: Schema.Array(BrowserIndexedDb) }),
+    Schema.Struct({ readable: Schema.Literal(false) }),
+  ]),
+);
+
+/** Every database of `page`'s origin, read by `readDatabases`, which must be able to. */
+const readAll = (page: Page) =>
+  Effect.gen(function* () {
+    const read = yield* decodeRead(yield* Effect.promise(() => page.evaluate(readDatabases)));
+    if (!read.readable) return yield* Effect.die("The databases could not be read");
+    return read.databases;
+  });
+
+/** Writes `databases` to `page`'s origin, version changes allowed unless said. */
+const write = (page: Page, databases: ReadonlyArray<BrowserIndexedDb>, versionChanges = true) =>
+  Effect.promise(() => page.evaluate(replaceDatabases, { databases, versionChanges }));
 const decodeState = Schema.decodeUnknownEffect(
   Schema.Struct({
     origins: Schema.Array(
@@ -170,12 +187,10 @@ describe.skipIf(executablePath === undefined)(
         const browser = yield* launched;
         const from = yield* freshPage(browser);
         yield* Effect.promise(() => storeEverything(from));
-        const read = yield* decodeDatabases(
-          yield* Effect.promise(() => from.evaluate(readDatabases)),
-        );
+        const read = yield* readAll(from);
 
         const to = yield* freshPage(browser);
-        yield* Effect.promise(() => to.evaluate(replaceDatabases, read));
+        assert.strictEqual(yield* write(to, read), "written");
         assert.deepStrictEqual(yield* Effect.promise(() => checkEverything(to)), EVERYTHING);
       }).pipe(Effect.scoped),
     );
@@ -189,9 +204,7 @@ describe.skipIf(executablePath === undefined)(
         yield* Effect.promise(() => storeEverything(from));
 
         // Ours, restored by Playwright: its types leave `indexedDB` out, so the state is a file.
-        const read = yield* decodeDatabases(
-          yield* Effect.promise(() => from.evaluate(readDatabases)),
-        );
+        const read = yield* readAll(from);
         const folder = yield* fs.makeTempDirectoryScoped({ prefix: "j3-indexeddb-" });
         const file = path.join(folder, "state.json");
         yield* fs.writeFileString(
@@ -213,7 +226,7 @@ describe.skipIf(executablePath === undefined)(
         );
         const dumped = state.origins.find(({ origin }) => origin === SITE)?.indexedDB ?? [];
         const ours = yield* freshPage(browser);
-        yield* Effect.promise(() => ours.evaluate(replaceDatabases, dumped));
+        assert.strictEqual(yield* write(ours, dumped), "written");
         assert.deepStrictEqual(yield* Effect.promise(() => checkEverything(ours)), EVERYTHING);
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
@@ -223,9 +236,7 @@ describe.skipIf(executablePath === undefined)(
         const browser = yield* launched;
         const from = yield* freshPage(browser);
         yield* Effect.promise(() => storeEverything(from));
-        const read = yield* decodeDatabases(
-          yield* Effect.promise(() => from.evaluate(readDatabases)),
-        );
+        const read = yield* readAll(from);
 
         // The tab's database has the same shape, a record more, and stays open.
         const tab = yield* freshPage(browser);
@@ -249,8 +260,10 @@ describe.skipIf(executablePath === undefined)(
         );
         const probe = yield* Effect.promise(() => tab.context().newPage());
         yield* Effect.promise(() => probe.goto(`${SITE}/`));
-        yield* Effect.promise(() => probe.evaluate(replaceDatabases, read)).pipe(
-          Effect.timeout("5 seconds"),
+        // No version change, so it is written even when none may be made.
+        assert.strictEqual(
+          yield* write(probe, read, false).pipe(Effect.timeout("5 seconds")),
+          "written",
         );
         assert.deepStrictEqual(yield* Effect.promise(() => checkEverything(probe)), EVERYTHING);
         const count = yield* Effect.promise(() =>
@@ -272,7 +285,7 @@ describe.skipIf(executablePath === undefined)(
       }).pipe(Effect.scoped),
     );
 
-    it.live("fails at once to delete a database a tab holds open", () =>
+    it.live("changes nothing when a version change is needed and none may be made", () =>
       Effect.gen(function* () {
         const browser = yield* launched;
         const tab = yield* freshPage(browser);
@@ -280,13 +293,79 @@ describe.skipIf(executablePath === undefined)(
         yield* Effect.promise(() => holdOpen(tab, "kept"));
         const probe = yield* Effect.promise(() => tab.context().newPage());
         yield* Effect.promise(() => probe.goto(`${SITE}/`));
-        const outcome = yield* Effect.promise(() =>
-          probe.evaluate(replaceDatabases, []).then(
-            () => "written",
-            (error: unknown) => String(error),
+        const read = yield* readAll(probe);
+        const [kept] = read;
+        if (kept === undefined) return yield* Effect.die("Nothing was stored");
+
+        const asked = [
+          [],
+          [{ ...kept, version: 4 }],
+          [{ ...kept, stores: kept.stores.slice(1) }],
+        ] as const;
+        for (const databases of asked)
+          assert.strictEqual(
+            yield* write(probe, databases, false).pipe(Effect.timeout("5 seconds")),
+            "version-change",
+          );
+        assert.deepStrictEqual(yield* Effect.promise(() => checkEverything(probe)), EVERYTHING);
+      }).pipe(Effect.scoped),
+    );
+
+    it.live("leaves a database as it was when a record cannot be written", () =>
+      Effect.gen(function* () {
+        const browser = yield* launched;
+        const page = yield* freshPage(browser);
+        yield* Effect.promise(() => storeEverything(page));
+        const [kept] = yield* readAll(page);
+        if (kept === undefined) return yield* Effect.die("Nothing was stored");
+        // A record of `records` without the `id` its key path names, written first.
+        const broken = (database: BrowserIndexedDb): BrowserIndexedDb => ({
+          ...database,
+          stores: database.stores.map((store) =>
+            store.name === "records"
+              ? { ...store, records: [{ value: { name: "no id" } }, ...store.records] }
+              : store,
           ),
-        ).pipe(Effect.timeout("5 seconds"));
-        assert.include(outcome, "holds a database open");
+        });
+
+        for (const database of [broken(kept), broken({ ...kept, version: 4 })]) {
+          const outcome = yield* Effect.promise(() =>
+            page.evaluate(replaceDatabases, { databases: [database], versionChanges: true }).then(
+              (written) => written,
+              () => "failed",
+            ),
+          );
+          assert.strictEqual(outcome, "failed");
+          assert.deepStrictEqual(yield* Effect.promise(() => checkEverything(page)), EVERYTHING);
+        }
+      }).pipe(Effect.scoped),
+    );
+
+    it.live("reads nothing of an origin whose databases hold a value it cannot carry", () =>
+      Effect.gen(function* () {
+        const browser = yield* launched;
+        const page = yield* freshPage(browser);
+        yield* Effect.promise(() => storeEverything(page));
+        yield* Effect.promise(() =>
+          page.evaluate(
+            () =>
+              new Promise((resolve) => {
+                const opened = indexedDB.open("kept");
+                opened.onsuccess = () => {
+                  const transaction = opened.result.transaction("loose", "readwrite");
+                  transaction.objectStore("loose").put(new Blob(["bytes"]), "a blob");
+                  transaction.oncomplete = () => {
+                    opened.result.close();
+                    resolve(undefined);
+                  };
+                };
+              }),
+          ),
+        );
+        assert.deepStrictEqual(
+          yield* decodeRead(yield* Effect.promise(() => page.evaluate(readDatabases))),
+          { readable: false },
+        );
       }).pipe(Effect.scoped),
     );
   },
