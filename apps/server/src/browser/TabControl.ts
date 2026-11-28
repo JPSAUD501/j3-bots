@@ -126,7 +126,18 @@ interface Waiter {
   readonly botId: BotId | null;
   /** Completed at every change, or failed when the waiter is refused. */
   wake: Deferred.Deferred<void, ActRefused>;
+  /**
+   * Its refusal, kept apart from `wake`: a wake already completed by a
+   * change cannot fail, and the waiter must still not be granted.
+   */
+  refused: ActRefused | null;
 }
+
+/** A fill's refusal for the refusal its waiter was given. */
+const fillRefusalOf = (refused: ActRefused): FillRefused =>
+  new FillRefused({
+    reason: refused.reason === "person" || refused.reason === "waiting" ? "person" : "closed",
+  });
 
 const toHolder = (holder: Holder): BrowserTabHolder => {
   switch (holder.kind) {
@@ -207,6 +218,7 @@ export const makeTabControl: Effect.Effect<TabControl, never, Scope.Scope> = Eff
         const refusal = refuse(waiter);
         if (refusal === null) continue;
         queue.splice(index, 1);
+        waiter.refused = refusal;
         Deferred.doneUnsafe(waiter.wake, Effect.fail(refusal));
       }
     };
@@ -246,6 +258,7 @@ export const makeTabControl: Effect.Effect<TabControl, never, Scope.Scope> = Eff
             // The decision and the queueing happen in one step, so no change
             // can slip between them unseen.
             const decision = ((): ActRefused | "go" | number => {
+              if (waiter?.refused) return waiter.refused;
               if (closed) return new ActRefused({ reason: "closed" });
               if (holder?.kind === "person")
                 return new ActRefused({ reason: holder.until === null ? "waiting" : "person" });
@@ -263,7 +276,7 @@ export const makeTabControl: Effect.Effect<TabControl, never, Scope.Scope> = Eff
                   blocker === null ? { reason: "bot" } : { reason: "bot", botId: blocker },
                 );
               if (waiter === null) {
-                waiter = { kind: "bot", botId, wake: Deferred.makeUnsafe() };
+                waiter = { kind: "bot", botId, wake: Deferred.makeUnsafe(), refused: null };
                 queue.push(waiter);
               } else {
                 waiter.wake = Deferred.makeUnsafe();
@@ -288,7 +301,13 @@ export const makeTabControl: Effect.Effect<TabControl, never, Scope.Scope> = Eff
             if (waiter !== null) yield* restore(awaitChange(waiter, decision));
           }
         },
-        Effect.onInterrupt(() => Effect.sync(() => dequeue(waiter))),
+        // The queue changed: the next waiter looks again.
+        Effect.onInterrupt(() =>
+          Effect.suspend(() => {
+            dequeue(waiter);
+            return changed;
+          }),
+        ),
       );
       const ended = Effect.gen(function* () {
         acting = null;
@@ -351,11 +370,12 @@ export const makeTabControl: Effect.Effect<TabControl, never, Scope.Scope> = Eff
           for (;;) {
             lapse(yield* now);
             const decision = ((): FillRefused | "go" | "wait" => {
+              if (waiter?.refused) return fillRefusalOf(waiter.refused);
               if (closed) return new FillRefused({ reason: "closed" });
               if (holder?.kind === "person") return new FillRefused({ reason: "person" });
               if (acting === null && holder?.kind !== "fill") return "go";
               if (waiter === null) {
-                waiter = { kind: "fill", botId: null, wake: Deferred.makeUnsafe() };
+                waiter = { kind: "fill", botId: null, wake: Deferred.makeUnsafe(), refused: null };
                 queue.unshift(waiter);
               } else {
                 waiter.wake = Deferred.makeUnsafe();
@@ -375,20 +395,17 @@ export const makeTabControl: Effect.Effect<TabControl, never, Scope.Scope> = Eff
             }
             if (waiter !== null)
               yield* restore(Deferred.await(waiter.wake)).pipe(
-                Effect.catchTag("ActRefused", (refused) =>
-                  Effect.fail(
-                    new FillRefused({
-                      reason:
-                        refused.reason === "person" || refused.reason === "waiting"
-                          ? "person"
-                          : "closed",
-                    }),
-                  ),
-                ),
+                Effect.catchTag("ActRefused", (refused) => Effect.fail(fillRefusalOf(refused))),
               );
           }
         },
-        Effect.onInterrupt(() => Effect.sync(() => dequeue(waiter))),
+        // The queue changed: the next waiter looks again.
+        Effect.onInterrupt(() =>
+          Effect.suspend(() => {
+            dequeue(waiter);
+            return changed;
+          }),
+        ),
       );
       const stillHeld = Effect.suspend(() =>
         holder?.kind === "fill"

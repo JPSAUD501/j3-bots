@@ -22,6 +22,7 @@ import { operatorDevice, TestServerBrowser } from "../testing/browser.ts";
 import * as TestDomain from "../testing/domain.ts";
 import { createBot } from "../testing/turns.ts";
 import { Browser, DESKTOP_GRACE, SERVER_TAB_CAP } from "./Browser.ts";
+import { TabAccess } from "./TabAccess.ts";
 import { BOT_LEASE } from "./TabControl.ts";
 
 const laptop = DeviceId.make("device-laptop");
@@ -332,5 +333,44 @@ it.effect("opens a parked tab once when two calls find it parked together", () =
       (call) => call.call === "tab.open" && call.tab === ref,
     );
     assert.strictEqual(opens.length, 1);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("refuses a fill whose tab lost its browser while the fill waited its turn", () =>
+  Effect.gen(function* () {
+    const browser = yield* Browser;
+    const bot = yield* createBot("Ana");
+    // A desktop whose browser holds a bot's action until the test lets it go.
+    const fake = yield* makeFakePageHost({ host: { kind: "desktop", device: laptop } });
+    const reached = yield* Deferred.make<void>();
+    const gate = yield* Deferred.make<void>();
+    const attached = yield* attach({
+      ...fake,
+      act: (input) =>
+        Deferred.succeed(reached, undefined).pipe(
+          Effect.andThen(Deferred.await(gate)),
+          Effect.andThen(fake.act(input)),
+        ),
+    });
+    while (!(yield* fake.calls).some((call) => call.call === "host.events")) yield* Effect.yieldNow;
+    const ref = yield* open(bot.id, "https://login.example.test/");
+    const acting = yield* browser.tools
+      .act(bot.id, ref, { action: "press", key: "Enter" })
+      .pipe(Effect.forkChild);
+    yield* Deferred.await(reached);
+
+    const hold = yield* (yield* TabAccess)
+      .holdForFill(ref)
+      .pipe(Effect.scoped, Effect.flip, Effect.forkChild);
+    // The fill finds the tab on its browser and waits for the bot's action.
+    for (let turn = 0; turn < 50; turn++) yield* Effect.yieldNow;
+    // The desktop goes: its tab has no browser, well within the fill's wait.
+    yield* Scope.close(attached, Exit.void);
+    yield* Deferred.succeed(gate, undefined);
+    yield* Fiber.join(acting).pipe(Effect.ignore);
+
+    assert.strictEqual((yield* Fiber.join(hold)).reason, "unavailable");
+    const hands = Option.getOrThrow(yield* browser.handsOf(ref));
+    assert.notStrictEqual((yield* hands.control.state).holder?.kind, "fill");
   }).pipe(Effect.provide(TestDomain.layer)),
 );

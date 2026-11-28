@@ -19,7 +19,8 @@ const refuse = HttpServerResponse.jsonUnsafe(new NotAuthenticated(), { status: 4
  * host that says it is anything but the desktop of the device the token
  * belongs to, or that speaks another version of the host protocol, is
  * closed before any of its tabs is listed; so is one whose device is
- * revoked. Nothing the socket carries is logged.
+ * revoked. Nothing the socket carries is logged, but the protocol version
+ * of a hello that speaks another.
  */
 export const route = HttpRouter.add(
   "GET",

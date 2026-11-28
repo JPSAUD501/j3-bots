@@ -64,7 +64,7 @@ export function bundleInputs(name: string): Plugin {
 }
 
 /** The folder, links resolved, of package `name` as Node finds it from `folder`. */
-const installedFrom = (folder: string, name: string): string => {
+export const installedFrom = (folder: string, name: string): string => {
   for (let at = folder; ; at = NodePath.dirname(at)) {
     const candidate = NodePath.join(at, "node_modules", name);
     if (NodeFS.existsSync(NodePath.join(candidate, "package.json"))) {

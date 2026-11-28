@@ -2,7 +2,7 @@
 // @effect-diagnostics nodeBuiltinImport:off -- the archives are written byte by byte, with zlib's CRC-32, as a zip tool would.
 import * as NodeZlib from "node:zlib";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, it } from "@effect/vitest";
+import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -72,41 +72,68 @@ const unpack = (entries: ReadonlyArray<TestEntry>) =>
     return { result, into, parent };
   });
 
-it.effect("unpacks files, folders and links that stay inside the folder", () =>
+it.effect("unpacks files and folders", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const { result, into } = yield* unpack([
-      { name: "chrome-linux64/chrome", text: "binary", executable: true },
+      { name: "chrome-linux64/chrome", text: "binary" },
       { name: "chrome-linux64/resources/locale.pak", text: "pak" },
-      { name: "chrome-linux64/current", linkTo: "resources/locale.pak" },
     ]);
     assert.strictEqual(result._tag, "Success");
-    const chrome = path.join(into, "chrome-linux64/chrome");
-    assert.strictEqual(yield* fs.readFileString(chrome), "binary");
-    assert.strictEqual(((yield* fs.stat(chrome)).mode & 0o111) !== 0, true);
     assert.strictEqual(
-      yield* fs.readLink(path.join(into, "chrome-linux64/current")),
-      "resources/locale.pak",
+      yield* fs.readFileString(path.join(into, "chrome-linux64/chrome")),
+      "binary",
+    );
+    assert.strictEqual(
+      yield* fs.readFileString(path.join(into, "chrome-linux64/resources/locale.pak")),
+      "pak",
     );
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
-it.effect(
-  "refuses an entry or a link that leads out of the folder, and writes nothing outside",
-  () =>
+it.effect("refuses an entry that leads out of the folder, and writes nothing outside", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const climbing = yield* unpack([{ name: "../escaped", text: "out" }]);
+    assert.strictEqual(climbing.result._tag, "Failure");
+    assert.isFalse(yield* fs.exists(path.join(climbing.parent, "escaped")));
+
+    const absolute = yield* unpack([{ name: "/tmp/j3-unzip-absolute", text: "out" }]);
+    assert.strictEqual(absolute.result._tag, "Failure");
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+// Permission bits and links, as the Linux and macOS archives carry them.
+// Windows keeps neither, and its archive has none.
+describe.skipIf(process.platform === "win32")("on Unix", () => {
+  it.effect("keeps a file executable, and a link that stays inside the folder", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const climbing = yield* unpack([{ name: "../escaped", text: "out" }]);
-      assert.strictEqual(climbing.result._tag, "Failure");
-      assert.isFalse(yield* fs.exists(path.join(climbing.parent, "escaped")));
+      const { result, into } = yield* unpack([
+        { name: "chrome-linux64/chrome", text: "binary", executable: true },
+        { name: "chrome-linux64/resources/locale.pak", text: "pak" },
+        { name: "chrome-linux64/current", linkTo: "resources/locale.pak" },
+      ]);
+      assert.strictEqual(result._tag, "Success");
+      const chrome = path.join(into, "chrome-linux64/chrome");
+      assert.strictEqual(((yield* fs.stat(chrome)).mode & 0o111) !== 0, true);
+      assert.strictEqual(
+        yield* fs.readLink(path.join(into, "chrome-linux64/current")),
+        "resources/locale.pak",
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
 
-      const absolute = yield* unpack([{ name: "/tmp/j3-unzip-absolute", text: "out" }]);
-      assert.strictEqual(absolute.result._tag, "Failure");
-
+  it.effect("refuses a link that leads out of the folder", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       const linking = yield* unpack([{ name: "chrome-linux64/out", linkTo: "../../escaped" }]);
       assert.strictEqual(linking.result._tag, "Failure");
       assert.isFalse(yield* fs.exists(path.join(linking.into, "chrome-linux64/out")));
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-);
+  );
+});

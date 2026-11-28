@@ -12,17 +12,11 @@ import * as Layout from "../../Layout.ts";
 import * as TestDatabase from "../../testing/database.ts";
 import { chromeFolders, ensureChrome } from "./chrome.ts";
 
-/** A client that answers every request with `status` and `body`, and counts them. */
-const answering = (status: number, body: Uint8Array) => {
-  let requests = 0;
-  const client = HttpClient.make((request) =>
-    Effect.sync(() => {
-      requests++;
-      return HttpClientResponse.fromWeb(request, new Response(body, { status }));
-    }),
+/** A client that answers every request with `status` and `body`. */
+const answering = (status: number, body: Uint8Array) =>
+  HttpClient.make((request) =>
+    Effect.succeed(HttpClientResponse.fromWeb(request, new Response(body, { status }))),
   );
-  return { client, requests: () => requests };
-};
 
 const install = (client: HttpClient.HttpClient) =>
   Effect.gen(function* () {
@@ -42,7 +36,7 @@ it.layer(layer)("the server's browser download", (it) => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const { home } = yield* ServerConfig;
-      const failed = yield* install(answering(200, new Uint8Array([1, 2, 3])).client);
+      const failed = yield* install(answering(200, new Uint8Array([1, 2, 3])));
       assert.strictEqual(failed.reason, "checksum");
       assert.isFalse(yield* fs.exists(chromeFolders(path, home, "linux64").partial));
     }),
@@ -50,7 +44,7 @@ it.layer(layer)("the server's browser download", (it) => {
 
   it.effect("says Google could not be reached when the download is refused", () =>
     Effect.gen(function* () {
-      const failed = yield* install(answering(503, new Uint8Array()).client);
+      const failed = yield* install(answering(503, new Uint8Array()));
       assert.strictEqual(failed.reason, "unreachable");
     }),
   );

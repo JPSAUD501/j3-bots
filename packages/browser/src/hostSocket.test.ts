@@ -79,7 +79,10 @@ it.live("answers the server's calls and streams its events over the socket it di
     assert.strictEqual(page.tab, TAB);
     const event = yield* host.events.pipe(Stream.take(1), Stream.runCollect, Effect.forkChild);
     // Until the call reaches the host, what it sends would be lost.
-    while (!(yield* fake.calls).some(({ call }) => call === "host.events")) yield* Effect.yieldNow;
+    for (let round = 0; !(yield* fake.calls).some(({ call }) => call === "host.events"); round++) {
+      if (round === 500) return yield* Effect.die("The events call never reached the host.");
+      yield* Effect.sleep("10 millis");
+    }
     yield* host.navigate({ tab: TAB, to: { kind: "url", url: "https://example.test/two" } });
     const [changed] = yield* Fiber.join(event);
     assert.strictEqual(changed?.type, "tab.changed");

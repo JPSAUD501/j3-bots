@@ -442,29 +442,46 @@ export const launchServerHost = (input: {
         { discard: true },
       );
 
+    /**
+     * The tab's page: the one open, the one opening, or a new one, so a ref
+     * has one page however many ask at once. The opening is listed and its
+     * removal set in one step, so no interrupt leaves it listed. Making the
+     * page and adopting it cannot be interrupted either, since Playwright
+     * makes the page anyway: a page whose adoption fails is closed. A
+     * browser that stops answering ends these, as it ends every call.
+     */
+    const pageFor = (tab: BrowserTabRef): Effect.Effect<DriverPage, BrowserHostError> =>
+      Effect.uninterruptibleMask((restore) =>
+        Effect.suspend(() => {
+          const existing = tabs.get(tab);
+          if (existing !== undefined) return Effect.succeed(existing.driver);
+          const inFlight = opening.get(tab);
+          if (inFlight !== undefined) return restore(Deferred.await(inFlight));
+          const made = Deferred.makeUnsafe<DriverPage, BrowserHostError>();
+          opening.set(tab, made);
+          return send(() => context.newPage()).pipe(
+            Effect.flatMap((page) =>
+              adopt(tab, page).pipe(
+                Effect.tapError(() => send(() => page.close()).pipe(Effect.ignore)),
+              ),
+            ),
+            Effect.onExit((exit) =>
+              Effect.sync(() => {
+                opening.delete(tab);
+                Deferred.doneUnsafe(made, exit);
+              }),
+            ),
+          );
+        }),
+      );
+
     const open: PageHost["open"] = Effect.fn("ServerHost.open")(function* (request) {
       if (request.private)
         return yield* new BrowserHostError({
           reason: "unsupported",
           detail: "A private tab opens only in the app.",
         });
-      const existing = tabs.get(request.tab);
-      if (existing !== undefined) return yield* existing.driver.state;
-      // A second open of a ref while the first runs gets that tab, not a page of its own.
-      const inFlight = opening.get(request.tab);
-      if (inFlight !== undefined)
-        return yield* Effect.flatMap(Deferred.await(inFlight), (driver) => driver.state);
-      const made = Deferred.makeUnsafe<DriverPage, BrowserHostError>();
-      opening.set(request.tab, made);
-      const driver = yield* send(() => context.newPage()).pipe(
-        Effect.flatMap((page) => adopt(request.tab, page)),
-        Effect.onExit((exit) =>
-          Effect.sync(() => {
-            opening.delete(request.tab);
-            Deferred.doneUnsafe(made, exit);
-          }),
-        ),
-      );
+      const driver = yield* pageFor(request.tab);
       if (request.url === undefined) return yield* driver.state;
       return yield* driver.navigate(
         { kind: "url", url: request.url },

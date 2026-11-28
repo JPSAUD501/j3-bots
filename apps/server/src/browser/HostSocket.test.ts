@@ -72,14 +72,14 @@ const listed = (tab: BrowserTabRef) =>
     return all._tag === "Some" && all.value.tabs.some((each) => each.ref === tab);
   });
 
-/** Waits until `check` holds, on the real clock these tests run on. */
-const until = <R>(check: Effect.Effect<boolean, never, R>) =>
+/** Returns once the tab is listed. */
+const listedOnce = (tab: BrowserTabRef) =>
   Effect.gen(function* () {
-    for (let round = 0; round < 500; round++) {
-      if (yield* check) return;
-      yield* Effect.sleep("10 millis");
-    }
-    return yield* Effect.die("The condition never held");
+    const browser = yield* Browser;
+    yield* browser.all.pipe(
+      Stream.filter((all) => all.tabs.some((each) => each.ref === tab)),
+      Stream.runHead,
+    );
   });
 
 const server = Ports.serve(
@@ -125,7 +125,7 @@ it.layer(server, { excludeTestServices: true })("page host socket", (it) => {
       const tab = BrowserTabRef.make("host-own-tab");
       const host = yield* desktopWithTab(deviceId, tab);
       const serving = yield* dial(host, token);
-      yield* until(listed(tab));
+      yield* listedOnce(tab);
 
       yield* (yield* DeviceAuth).revoke(deviceId);
       assert.strictEqual(yield* Fiber.join(serving), "closed");

@@ -29,7 +29,7 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeUtil from "node:util";
-import { BUNDLE_INPUTS_FOLDER } from "./bundle-inputs.ts";
+import { BUNDLE_INPUTS_FOLDER, installedFrom } from "./bundle-inputs.ts";
 import {
   PLATFORMS,
   type Platform,
@@ -224,17 +224,6 @@ const COMPILED_IN: ReadonlyArray<{
   { part: "server", from: SERVER, through: ["vite-plus", "vite"] },
   { part: "web", from: WEB, through: ["vite-plus", "vite"] },
 ];
-
-/** The folder, links resolved, of package `name` as Node finds it from `folder`. */
-const installedFrom = (folder: string, name: string): string => {
-  for (let at = folder; ; at = NodePath.dirname(at)) {
-    const candidate = NodePath.join(at, "node_modules", name);
-    if (NodeFS.existsSync(NodePath.join(candidate, "package.json"))) {
-      return NodeFS.realpathSync(candidate);
-    }
-    if (NodePath.dirname(at) === at) throw new Error(`${name} is not installed for ${folder}.`);
-  }
-};
 
 const compiledIn = (parts: ReadonlyArray<Part>) =>
   COMPILED_IN.filter(({ part }) => parts.includes(part)).map(({ part, from, through }) => ({

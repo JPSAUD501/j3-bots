@@ -1107,7 +1107,7 @@ A bot browses with J3 Bots' own browser, through its `browser_*` tools, never th
 - A tab no person opened, unused for 24 hours, is closed. A tab whose page crashed is parked; a tab its host closes is forgotten.
 - A desktop that comes back with a tab that runs on another host now has that copy closed, as it does for one it says it opened later; a parked tab the desktop no longer holds stays parked. A desktop that connects again before its old connection ended replaces it: what the old one still says changes nothing.
 
-**Tabs a host opens by itself.** A pop-up becomes a tab of its own on its opener's host, opened by the page, with its opener's bots on it, and the current tab of each bot whose current tab opened it. A tab the operator opens in the app is the operator's.
+**Tabs a host opens by itself.** A pop-up becomes a tab of its own on its opener's host, opened by the page, with its opener's bots on it, and the current tab of each bot whose current tab opened it. A private tab's pop-up, and its pop-ups in turn, are private: no bot is on one, and none becomes a bot's current tab. A tab the operator opens in the app is the operator's.
 
 **Private tabs.** A tab the operator opens as private in the app is never stored, never listed to a bot, never resolved for a bot's call (it is `noTab` to a bot that names it), never the tab a call without one falls back on, and forgotten when it would be parked. Only the desktop app opens one: the server's browser refuses it. The app's browser lists its private tabs apart in its hello (`privateTabs`), so one still open stays the operator's through a reconnect and a restart of the server.
 

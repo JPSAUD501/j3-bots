@@ -502,9 +502,11 @@ export const layer = Layer.effect(
       tab.dialog = page.dialog;
     };
 
+    // Notes are kept only for a bot on the tab: one withdrawn meanwhile,
+    // whose action or download ended later, gets none.
     const tell = (botId: BotId, ref: BrowserTabRef, line: string) => {
       const tab = tabs.get(ref);
-      if (tab === undefined) return;
+      if (tab === undefined || !tab.bots.has(botId)) return;
       const lines = tab.pending.get(botId) ?? [];
       lines.push(line);
       tab.pending.set(botId, lines);
@@ -739,8 +741,11 @@ export const layer = Layer.effect(
         focusedAt: 0,
         downloads: new Map(),
       };
-      hosts.set(key, entry);
-      yield* Effect.addFinalizer(() => detach(entry));
+      // Listed, and its detach set, in one step no interruption splits.
+      yield* Effect.acquireRelease(
+        Effect.sync(() => hosts.set(key, entry)),
+        () => detach(entry),
+      );
       // The host's tabs, matched with the registry. One that runs on another
       // live host since is closed here, so a tab runs in one place.
       const held = [
@@ -807,6 +812,8 @@ export const layer = Layer.effect(
         );
         yield* SubscriptionRef.set(serverProblem, Option.none());
         server = scope;
+        // A start can take a while: its idle time counts from when it is ready.
+        serverUsedAt = yield* now;
         const host = hosts.get(SERVER);
         if (host === undefined) return yield* Effect.fail<ServerBrowserProblem>("failed");
         return host;
@@ -964,6 +971,7 @@ export const layer = Layer.effect(
 
     /** The bot saw the tab as its own action left it. */
     const sawOwn = (botId: BotId, tab: Tab) => {
+      if (!tab.bots.has(botId)) return;
       tab.seen.set(botId, { actions: tab.actionCount, reopened: tab.reopened });
     };
 
@@ -1304,10 +1312,13 @@ export const layer = Layer.effect(
         yield* underLease(
           tab,
           botId,
-          Effect.suspend(() => {
-            const host = hostOf(tab);
-            return host === undefined ? Effect.void : host.host.close(tab.ref);
-          }),
+          Effect.andThen(
+            stillOn(botId),
+            Effect.suspend(() => {
+              const host = hostOf(tab);
+              return host === undefined ? Effect.void : host.host.close(tab.ref);
+            }),
+          ),
         );
         yield* forget(tab);
         return withNotice({}, notice);
@@ -1531,12 +1542,19 @@ export const layer = Layer.effect(
           if (host !== undefined) yield* host.host.close(tab.ref).pipe(Effect.ignore);
         }
       }
-      // Not while a tab is being placed on it, which it does not list yet.
-      const serverIdle =
-        serverPending === 0 &&
-        [...tabs.values()].every((tab) => tab.where.kind !== "server") &&
-        at - serverUsedAt >= Duration.toMillis(SWEEP_EVERY);
-      if (server !== null && serverIdle) yield* serverLock.withPermits(1)(closeServerBrowser);
+      // Decided under the lock a start takes, so a placement that came
+      // meanwhile is seen. Not while a tab is being placed on it, which it
+      // does not list yet.
+      yield* serverLock.withPermits(1)(
+        Effect.gen(function* () {
+          const idle =
+            server !== null &&
+            serverPending === 0 &&
+            [...tabs.values()].every((tab) => tab.where.kind !== "server") &&
+            (yield* now) - serverUsedAt >= Duration.toMillis(SWEEP_EVERY);
+          if (idle) yield* closeServerBrowser;
+        }),
+      );
     });
     yield* sweep.pipe(
       Effect.catchCause((cause) => Effect.logWarning("The browser's sweep failed", cause)),
@@ -1600,8 +1618,12 @@ export const tabAccessLayer = Layer.effect(
         yield* Fiber.interrupt(holding);
         return yield* refused.value;
       }
-      // The tab may have moved, or lost its host, while the fill waited its turn.
-      const after = yield* browser.handsOf(ref);
+      // The tab may have moved, or lost its host, while the fill waited its
+      // turn, or closed and been opened again under its ref: a tab with
+      // another control is not the one held.
+      const sameTab = (hands: Option.Option<TabHands>) =>
+        Option.filter(hands, (it) => it.control === control);
+      const after = sameTab(yield* browser.handsOf(ref));
       if (Option.isNone(after) || Option.isNone(after.value.host)) {
         yield* Fiber.interrupt(holding);
         return yield* new FillHoldRefused({ reason: "unavailable" });
@@ -1609,7 +1631,10 @@ export const tabAccessLayer = Layer.effect(
       return {
         host: after.value.host.value,
         page: after.value.page,
-        preempted: Effect.map(control.state, (state) => state.holder?.kind !== "fill"),
+        preempted: Effect.gen(function* () {
+          if (Option.isNone(sameTab(yield* browser.handsOf(ref)))) return true;
+          return (yield* control.state).holder?.kind !== "fill";
+        }),
       };
     });
 
