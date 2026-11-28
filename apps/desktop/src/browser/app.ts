@@ -144,6 +144,8 @@ export const serveBrowser = (options: {
       ["panel", { window: options.main, placement: { bounds: null, covered: false }, still: null }],
     ]);
     const placed = new Map<BrowserTabRef, Placed>();
+    /** The tabs a bot is typing a saved login into, which no window takes input for meanwhile. */
+    const held = new Set<BrowserTabRef>();
     const order: Array<BrowserTabRef> = [];
     const front: Record<BrowserPlace, BrowserTabRef | null> = { panel: null, window: null };
     const closed: Array<{ readonly url: string; readonly place: BrowserPlace }> = [];
@@ -266,6 +268,7 @@ export const serveBrowser = (options: {
         canGoForward: contents.navigationHistory.canGoForward(),
         zoom: Math.min(500, Math.max(25, Math.round(contents.getZoomFactor() * 100))),
         private: tab.private,
+        held: held.has(ref),
         place: at.place,
         failed: at.failed === null ? null : { url: at.failed.slice(0, 8192) },
       };
@@ -290,7 +293,9 @@ export const serveBrowser = (options: {
         const at = placed.get(ref);
         const tab = browser.tab(ref);
         if (pane === undefined || at === undefined || tab === undefined) continue;
-        const { bounds, covered } = pane.placement;
+        const { bounds } = pane.placement;
+        // Something of the window over it, or a bot typing a login into it: a still, and no input.
+        const covered = pane.placement.covered || held.has(ref);
         const inFront = front[at.place] === ref;
         const shows =
           inFront && bounds !== null && at.failed === null && shownUrl(tab.contents) !== "";
@@ -458,9 +463,15 @@ export const serveBrowser = (options: {
           case "changed":
             changed();
             return;
+          case "held":
+            if (event.held) held.add(event.tab);
+            else held.delete(event.tab);
+            changed();
+            return;
           case "closed": {
             const at = placed.get(event.tab);
             placed.delete(event.tab);
+            held.delete(event.tab);
             const index = order.indexOf(event.tab);
             if (at !== undefined && front[at.place] === event.tab) {
               front[at.place] = nextInFront(at.place, event.tab);

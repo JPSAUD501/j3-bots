@@ -44,9 +44,10 @@ export function PageArea({
   readonly command: (command: DesktopBrowserCommand) => void;
   readonly onStopFinding: () => void;
 }) {
+  const { t } = useI18n();
   const [area, setArea] = useState<HTMLDivElement | null>(null);
   const underDialog = useCovered(area);
-  const hidden = covered || underDialog;
+  const hidden = covered || underDialog || tab?.held === true;
   const still = useStillOf(bridge, tab?.ref ?? null);
 
   useLayoutEffect(() => {
@@ -107,6 +108,12 @@ export function PageArea({
             className="absolute inset-0 size-full object-cover object-top-left"
           />
         ) : null}
+        {tab?.held === true && (
+          // No live region here: the area must hold none for `useCovered` to see a dialog over it.
+          <p className="absolute inset-x-0 top-3 mx-auto w-fit max-w-[calc(100%-2rem)] rounded-full bg-foreground px-3 py-1.5 text-center text-xs text-background shadow-raised">
+            {t("desktopBrowser.held")}
+          </p>
+        )}
       </div>
     </div>
   );

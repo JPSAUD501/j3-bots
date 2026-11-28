@@ -278,7 +278,11 @@ describe.skipIf(process.platform !== "linux" || process.env["DISPLAY"] === undef
 
           // A bot's download is kept for the server, once.
           yield* host.act({ tab, action: { action: "click", locator: "text=Get the file" } });
+          // Told as it begins, so the server decides then whose it is; finished under the same id.
+          const started = yield* next(events, "download.started");
+          assert.strictEqual(started.tab, tab);
           const finished = yield* next(events, "download.finished");
+          assert.strictEqual(finished.download, started.download);
           assert.strictEqual(finished.name, "report.txt");
           const { bytes } = yield* host.takeDownload({ download: finished.download });
           assert.strictEqual(new TextDecoder().decode(bytes), "hello");
@@ -320,6 +324,17 @@ describe.skipIf(process.platform !== "linux" || process.env["DISPLAY"] === undef
           yield* host.act({ tab, action: { action: "click", locator: "text=Alert" } });
           yield* next(events, "tab.changed", (event) => event.page.dialog !== null);
           yield* host.dialog({ tab, accept: true });
+
+          // A private tab the server opens is in the hello apart from the shared ones.
+          const secret = BrowserTabRef.make("tab-check-private");
+          yield* host.open({ tab: secret, background: true, private: true });
+          const again = yield* host.hello;
+          assert.deepStrictEqual(
+            again.privateTabs?.map((page) => page.tab),
+            [secret],
+          );
+          assert.isFalse(again.tabs.some((page) => page.tab === secret));
+          yield* host.close(secret);
 
           yield* host.close(tab);
           yield* next(events, "tab.closed", (event) => event.tab === tab);

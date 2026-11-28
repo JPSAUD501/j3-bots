@@ -416,6 +416,7 @@ const sentences = {
   "desktopBrowser.newPrivateTab": "Nova aba privada",
   "desktopBrowser.closeTab": "Fechar aba",
   "desktopBrowser.private": "Privada",
+  "desktopBrowser.held": "Um bot está entrando aqui. A página volta para você em instantes.",
   "desktopBrowser.privateHint": "Aba privada: nenhum bot vê, e ela esquece tudo ao fechar.",
   "desktopBrowser.otherTabs.one": "Mais {count} aba",
   "desktopBrowser.otherTabs.other": "Mais {count} abas",

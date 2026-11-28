@@ -23,6 +23,7 @@ export { Bots } from "../bots/Bots.ts";
 export { Devices } from "../devices/Devices.ts";
 export { Entries } from "../entries/Entries.ts";
 export { Presence } from "../presence/Presence.ts";
+export { Rooms } from "../rooms/Rooms.ts";
 export { Usage } from "../turns/Usage.ts";
 export { Browser } from "../browser/Browser.ts";
 export type { FakePageHost } from "@j3-bots/browser/testing";

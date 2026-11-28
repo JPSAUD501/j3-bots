@@ -29,6 +29,7 @@ export const sampleDesktopTab = (
   canGoForward: false,
   zoom: 100,
   private: false,
+  held: false,
   place: "panel",
   failed: null,
   ...change,

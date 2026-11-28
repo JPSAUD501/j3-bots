@@ -40,6 +40,8 @@ export const DesktopBrowserTab = Schema.Struct({
   zoom: Percent,
   /** A private tab: no bot sees it, and it forgets everything as it closes. */
   private: Schema.Boolean,
+  /** A bot is typing a saved login into it: the page shows as a still, and takes no input. */
+  held: Schema.Boolean,
   place: BrowserPlace,
   /** The page failed to load: the site it was going to, for the page that says so. */
   failed: Schema.NullOr(Schema.Struct({ url: Address })),

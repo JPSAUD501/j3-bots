@@ -67,7 +67,9 @@ export type LocalBrowserEvent =
       readonly background: boolean;
     }
   | { readonly type: "changed"; readonly tab: DesktopTab; readonly page: BrowserPageState }
-  | { readonly type: "closed"; readonly tab: BrowserTabRef };
+  | { readonly type: "closed"; readonly tab: BrowserTabRef }
+  /** A bot is typing a saved login into the tab: the person's input there waits until it ends. */
+  | { readonly type: "held"; readonly tab: BrowserTabRef; readonly held: boolean };
 
 /** The desktop's browser, for the server's link and for the app's own view of it. */
 export interface DesktopBrowser {
@@ -348,6 +350,8 @@ export const makeDesktopBrowser = (options: {
       }
       options.downloading?.(item, "bot", entry.tab.ref);
       const download = mintDownload();
+      // The server decides now whose it is, so a bot that acts on the tab later never takes it.
+      run(tell({ type: "download.started", tab: entry.tab.ref, download }));
       const name = savedName(item.getFilename());
       const folder = NodePath.join(options.scratch, "downloads", download);
       NodeFS.mkdirSync(folder, { recursive: true });
@@ -630,6 +634,11 @@ export const makeDesktopBrowser = (options: {
           reported().filter((entry) => !entry.tab.private),
           (entry) => entry.tab.driver.state,
         );
+        // The private tabs the server opened, and their pop-ups: never one the person opened here.
+        const privateTabs = yield* Effect.forEach(
+          reported().filter((entry) => entry.tab.private),
+          (entry) => entry.tab.driver.state,
+        );
         return {
           protocol: BROWSER_HOST_PROTOCOL_VERSION,
           host: { kind: "desktop", device },
@@ -645,6 +654,7 @@ export const makeDesktopBrowser = (options: {
             nativeView: true,
           },
           tabs,
+          ...(privateTabs.length === 0 ? {} : { privateTabs }),
         };
       }),
       events: Stream.fromPubSub(toServer),
@@ -692,6 +702,14 @@ export const makeDesktopBrowser = (options: {
         }),
       ...tabCalls,
       navigate: (input) => paintingWhile(input.tab, tabCalls.navigate(input)),
+      // The window showing the tab takes none of the person's input while the login is typed,
+      // so no key of theirs lands among the value's: the app shows a still of the page meanwhile.
+      fill: (input) =>
+        Effect.acquireUseRelease(
+          tellApp({ type: "held", tab: input.tab, held: true }),
+          () => paintingWhile(input.tab, tabCalls.fill(input)),
+          () => tellApp({ type: "held", tab: input.tab, held: false }),
+        ),
       act: (input) =>
         Effect.suspend(() => {
           // The server is another computer: an upload gives the page only files it sent for this tab.

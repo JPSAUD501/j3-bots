@@ -420,6 +420,7 @@ export const en = {
   "desktopBrowser.newPrivateTab": "New private tab",
   "desktopBrowser.closeTab": "Close tab",
   "desktopBrowser.private": "Private",
+  "desktopBrowser.held": "A bot is signing in here. The page is yours again in a moment.",
   "desktopBrowser.privateHint":
     "Private tab: no bot sees it, and it forgets everything when it closes.",
   "desktopBrowser.otherTabs.one": "{count} more tab",

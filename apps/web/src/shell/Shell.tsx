@@ -177,7 +177,10 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
   const [routinesFor, setRoutinesFor] = useState<BotId | null>(null);
   if (openingFirstBot && item !== null) setOpeningFirstBot(false);
   // Beside the conversation, or over it: a bot's browser, or else the details.
-  const browserTarget = item?._tag === "bot" ? navigation.browser : null;
+  // A bot's browser beside its conversation; on the desktop, the app's own browser, which is
+  // the person's, beside any conversation, a room's included.
+  const browserTarget =
+    item?._tag === "bot" || (item !== null && desktop !== null) ? navigation.browser : null;
   const detailsOpen = navigation.detailsOpen && browserTarget === null;
   const aside = browserTarget !== null ? "browser" : detailsOpen ? "details" : null;
   // On a phone the details take the screen; the browser rises over the conversation as a sheet.
@@ -207,11 +210,11 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
     browserTarget !== null &&
     (browserTarget === "front" ||
       desktopBrowser?.tabs.some((tab) => tab.ref === browserTarget) === true);
-  // A tab the person sends here from the browser's window shows beside the open bot's
-  // conversation, in place of what that side showed. With no bot open it waits in the
-  // panel, which any bot's conversation opens.
+  // A tab the person sends here from the browser's window shows beside the open
+  // conversation, in place of what that side showed. With none open it waits in the
+  // panel, which any conversation opens.
   const sentBeside = useEffectEvent((tab: BrowserTabRef) => {
-    if (item?._tag === "bot" && !inDesktopBrowser) navigation.setBrowser(tab);
+    if (item !== null && !inDesktopBrowser) navigation.setBrowser(tab);
   });
   useEffect(() => {
     const bridge = desktop?.browser;
@@ -574,19 +577,19 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
               text,
             }))
           }
-          {...(browserBot === null
-            ? {}
-            : desktop !== null
-              ? {
-                  actions: (
-                    <BrowserToggle
-                      open={browserTarget !== null}
-                      onToggle={() =>
-                        browserTarget === null ? navigation.setBrowser("front") : closeAside()
-                      }
-                    />
-                  ),
-                }
+          {...(desktop !== null
+            ? {
+                actions: (
+                  <BrowserToggle
+                    open={browserTarget !== null}
+                    onToggle={() =>
+                      browserTarget === null ? navigation.setBrowser("front") : closeAside()
+                    }
+                  />
+                ),
+              }
+            : browserBot === null
+              ? {}
               : {
                   actions: (
                     <BrowserIndicator
@@ -766,7 +769,8 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
         </div>
       </>
     );
-    if (desktop !== null && browserTarget !== null && inDesktopBrowser) {
+    // Beside a room, only the app's own browser: a bot's server tab has no place there.
+    if (desktop !== null && browserTarget !== null && (inDesktopBrowser || browserBot === null)) {
       details = (
         <DesktopBrowserPanel
           bridge={desktop.browser}

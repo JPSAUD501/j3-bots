@@ -86,6 +86,15 @@ it.layer(Layer.mergeAll(Server.layer(Layer.empty), NodeServices.layer), {
           commandId: CommandId.make("browser-bot"),
           draft: { name: "Browser Bot", job: "" },
         });
+        const other = yield* (yield* Server.Bots).create({
+          commandId: CommandId.make("browser-bot-two"),
+          draft: { name: "Second Bot", job: "" },
+        });
+        const room = yield* (yield* Server.Rooms).create({
+          commandId: CommandId.make("browser-room"),
+          name: "Fake Room",
+          members: [bot.id, other.id],
+        });
         const { code } = yield* (yield* Server.Devices).startPairing;
         const fs = yield* FileSystem.FileSystem;
         const profile = yield* fs.makeTempDirectoryScoped({ prefix: "j3-desktop-browser-" });
@@ -186,6 +195,29 @@ it.layer(Layer.mergeAll(Server.layer(Layer.empty), NodeServices.layer), {
         );
 
         // To the browser's own window, and back once it closes.
+        yield* Effect.promise(() =>
+          page.getByRole("button", { name: "Open in a window" }).click({ timeout: STEP }),
+        );
+        yield* until(views(), (now) =>
+          now.some((view) => view.window === "/browser" && !view.shared),
+        );
+
+        // Sent back while the main window is on a room, it shows there, beside the room.
+        yield* Effect.promise(async () => {
+          await page.getByText(room.name).first().click({ timeout: STEP });
+          const popOut = app
+            .windows()
+            .find((window) => new URL(window.url()).pathname === "/browser");
+          if (popOut === undefined) throw new Error("the browser's window has no page");
+          await popOut
+            .getByRole("button", { name: "Put beside the conversation" })
+            .first()
+            .click({ timeout: STEP });
+        });
+        yield* until(views(), (now) =>
+          now.some((view) => !view.shared && view.visible && view.window.startsWith("/rooms/")),
+        );
+        // And to the window again, for its closing to bring it back.
         yield* Effect.promise(() =>
           page.getByRole("button", { name: "Open in a window" }).click({ timeout: STEP }),
         );
