@@ -11,7 +11,6 @@ import * as NodePath from "node:path";
 import { driverTabCalls, type PageHost } from "@j3-bots/browser";
 import {
   BROWSER_HOST_PROTOCOL_VERSION,
-  type BrowserCookie,
   BrowserDownloadId,
   BrowserHostError,
   type BrowserHostEvent,
@@ -28,7 +27,6 @@ import * as Fiber from "effect/Fiber";
 import * as PubSub from "effect/PubSub";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
-import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import {
   app,
@@ -43,7 +41,7 @@ import {
   WebContentsView,
   webContents as allWebContents,
 } from "electron";
-import { cookieChanges, cookieId, keyOfCookie, withCookieChanges } from "./cookies.ts";
+import { makeCookieLedger } from "./cookies.ts";
 import { freeName, savedName } from "./files.ts";
 import {
   type Identity,
@@ -101,8 +99,12 @@ export interface DesktopBrowser {
   readonly evacuate: (window: BaseWindow) => void;
   /** The person used the tab from the app's own controls: its address, back or forward. */
   readonly personUsed: (ref: BrowserTabRef) => Effect.Effect<void>;
-  /** Empties the shared sign-ins: the server no longer takes this device. */
-  readonly forgetSignIns: Effect.Effect<void>;
+  /**
+   * Empties the shared sign-ins: the server no longer takes this device.
+   * Fails when they were not emptied, and they are emptied again as the
+   * browser next starts.
+   */
+  readonly forgetSignIns: Effect.Effect<void, BrowserHostError>;
 }
 
 /** How long cookie changes gather before they are sent: a sign-in sets many at once. */
@@ -351,23 +353,15 @@ export const makeDesktopBrowser = (options: {
     // -----------------------------------------------------------------------
     // Sign-ins: what the sites change is sent, what the server writes is not.
 
-    let known = new Map<string, BrowserCookie>(
-      (yield* signIns.readCookies).map((cookie) => [cookieId(keyOfCookie(cookie)), cookie]),
-    );
-    // A look at the jar and a write the server asks for take turns: a look between a write's
-    // `known` and its landing would tell its cookies as removed, then the write itself as new.
-    const cookiesLock = yield* Semaphore.make(1);
+    const ledger = yield* makeCookieLedger({
+      read: signIns.readCookies,
+      write: signIns.writeCookies,
+    });
     let gathering: Fiber.Fiber<void, BrowserHostError> | undefined;
     const sendCookieChanges = Effect.gen(function* () {
       yield* Effect.sleep(COOKIE_BATCH_MS);
       gathering = undefined;
-      const changes = yield* cookiesLock.withPermits(1)(
-        Effect.gen(function* () {
-          const found = cookieChanges(known, yield* signIns.readCookies);
-          known = withCookieChanges(known, found);
-          return found;
-        }),
-      );
+      const changes = yield* ledger.look;
       if (changes.set.length > 0 || changes.removed.length > 0) {
         yield* tell({ type: "cookies.changed", changes });
       }
@@ -376,6 +370,62 @@ export const makeDesktopBrowser = (options: {
     shared.cookies.on("changed", () => {
       gathering ??= runFork(sendCookieChanges);
     });
+
+    /**
+     * A device's sign-ins, emptied once the server no longer takes it: marked
+     * first in a file of its own, so an emptying that failed or was cut short
+     * is done again as the browser next starts, before anything is linked.
+     */
+    const forgetFile = NodePath.join(app.getPath("userData"), "j3-forget-sign-ins");
+    const forgetSignIns = ledger.forget(
+      Effect.gen(function* () {
+        yield* Effect.try({
+          try: () => NodeFS.writeFileSync(forgetFile, ""),
+          catch: (cause) => failed("page", String(cause)),
+        }).pipe(
+          Effect.catch((error) =>
+            Effect.logWarning("The sign-ins' emptying is not kept to do again", error),
+          ),
+        );
+        // Named anew before it is emptied, so no hello names an emptied store by its old
+        // name: a host stopped in between only seems new. With no new name, no name at all.
+        cookieStore = undefined;
+        if (storeFile !== null) {
+          cookieStore = yield* mintStore(storeFile).pipe(
+            Effect.catch((error) =>
+              Effect.try({
+                try: () => NodeFS.rmSync(storeFile, { force: true }),
+                catch: (cause) => failed("page", String(cause)),
+              }).pipe(
+                Effect.catch((kept) =>
+                  Effect.logError("The sign-ins' store keeps its old name", kept),
+                ),
+                Effect.andThen(unnamed(error)),
+              ),
+            ),
+          );
+        }
+        yield* Effect.tryPromise({
+          try: () => shared.clearData(),
+          catch: (cause) => failed("page", `The sign-ins were not cleared: ${String(cause)}`),
+        });
+        yield* Effect.try({
+          try: () => NodeFS.rmSync(forgetFile, { force: true }),
+          catch: (cause) => failed("page", String(cause)),
+        }).pipe(
+          Effect.catch((error) =>
+            Effect.logWarning("The sign-ins' emptying stays marked to do again", error),
+          ),
+        );
+      }),
+    );
+    if (NodeFS.existsSync(forgetFile)) {
+      yield* forgetSignIns.pipe(
+        Effect.catch((error) =>
+          Effect.logError("The sign-ins of a device the server no longer takes stay", error),
+        ),
+      );
+    }
 
     const originOf = (url: string) => {
       const parsed = URL.parse(url);
@@ -898,22 +948,7 @@ export const makeDesktopBrowser = (options: {
           );
         }),
       readCookies: Effect.map(signIns.readCookies, (cookies) => ({ cookies })),
-      writeCookies: (changes) =>
-        cookiesLock.withPermits(1)(
-          Effect.suspend(() => {
-            // Known first: the writes' own `changed` events then find nothing new. A write that
-            // fails is known no more, so no look takes its cookies for ones the site removed.
-            const before = known;
-            known = withCookieChanges(known, changes);
-            return signIns.writeCookies(changes).pipe(
-              Effect.onError(() =>
-                Effect.sync(() => {
-                  known = before;
-                }),
-              ),
-            );
-          }),
-        ),
+      writeCookies: ledger.write,
       readStorage: ({ origins, indexedDb }) =>
         Effect.map(signIns.readStorage(origins, indexedDb), (read) => ({ origins: read })),
       writeStorage: (origins) => signIns.writeStorage(origins, sharedShows),
@@ -1027,32 +1062,6 @@ export const makeDesktopBrowser = (options: {
           entry?.tab.personUsed();
           return entry?.reported === true ? tell({ type: "person.input", tab: ref }) : Effect.void;
         }),
-      forgetSignIns: cookiesLock.withPermits(1)(
-        Effect.gen(function* () {
-          // Named anew before it is emptied, so no hello names an emptied store by its old
-          // name: a host stopped in between only seems new. With no new name, no name at all.
-          cookieStore = undefined;
-          if (storeFile !== null) {
-            cookieStore = yield* mintStore(storeFile).pipe(
-              Effect.catch((error) =>
-                Effect.try({
-                  try: () => NodeFS.rmSync(storeFile, { force: true }),
-                  catch: (cause) => failed("page", String(cause)),
-                }).pipe(
-                  Effect.catch((kept) =>
-                    Effect.logError("The sign-ins' store keeps its old name", kept),
-                  ),
-                  Effect.andThen(unnamed(error)),
-                ),
-              ),
-            );
-          }
-          yield* Effect.tryPromise({
-            try: () => shared.clearData(),
-            catch: (cause) => failed("page", `The sign-ins were not cleared: ${String(cause)}`),
-          }).pipe(Effect.catch((error) => Effect.logError("The sign-ins were not cleared", error)));
-          known = new Map();
-        }),
-      ),
+      forgetSignIns,
     };
   });

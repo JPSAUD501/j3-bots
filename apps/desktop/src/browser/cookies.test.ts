@@ -1,7 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, describe, it } from "@effect/vitest";
-import type { BrowserCookie } from "@j3-bots/contracts";
-import { cookieChanges, withCookieChanges } from "./cookies.ts";
+import {
+  type BrowserCookie,
+  type BrowserCookieChanges,
+  BrowserHostError,
+} from "@j3-bots/contracts";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import { cookieChanges, makeCookieLedger, withCookieChanges } from "./cookies.ts";
 
 const hostOnly: BrowserCookie = {
   name: "sid",
@@ -45,4 +51,50 @@ describe("the changes a site makes to the desktop's cookies", () => {
       removed: [],
     });
   });
+});
+
+describe("the desktop's account of its jar", () => {
+  const refused = new BrowserHostError({ reason: "page", detail: "The jar refused it." });
+  /** A jar holding `cookies`, whose writes and emptying fail when `failing`. */
+  const jarOf = (cookies: ReadonlyArray<BrowserCookie>) => {
+    let held = cookies;
+    const jar = {
+      failing: false,
+      read: Effect.sync(() => held),
+      write: (changes: BrowserCookieChanges) =>
+        Effect.suspend(() => {
+          if (jar.failing) return Effect.fail(refused);
+          held = [...withCookieChanges(new Map(held.map((c) => [c.name, c])), changes).values()];
+          return Effect.void;
+        }),
+      empty: Effect.suspend(() => {
+        if (jar.failing) return Effect.fail(refused);
+        held = [];
+        return Effect.void;
+      }),
+    };
+    return jar;
+  };
+
+  it.effect("tells no cookie as new after an emptying that failed", () =>
+    Effect.gen(function* () {
+      const jar = jarOf([hostOnly]);
+      const ledger = yield* makeCookieLedger(jar);
+      jar.failing = true;
+      const forgot = yield* Effect.exit(ledger.forget(jar.empty));
+      assert.isTrue(Exit.isFailure(forgot));
+      assert.deepStrictEqual(yield* ledger.look, { set: [], removed: [] });
+    }),
+  );
+
+  it.effect("tells no cookie of a write that failed as removed", () =>
+    Effect.gen(function* () {
+      const jar = jarOf([]);
+      const ledger = yield* makeCookieLedger(jar);
+      jar.failing = true;
+      const wrote = yield* Effect.exit(ledger.write({ set: [hostOnly], removed: [] }));
+      assert.isTrue(Exit.isFailure(wrote));
+      assert.deepStrictEqual(yield* ledger.look, { set: [], removed: [] });
+    }),
+  );
 });

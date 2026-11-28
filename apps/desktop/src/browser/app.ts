@@ -721,6 +721,13 @@ export const serveBrowser = (options: {
       ),
       Effect.forkScoped,
     );
+    // A device the server no longer takes keeps none of its sign-ins: one not emptied now is
+    // emptied as the browser next starts.
+    const forgetSignIns = browser.forgetSignIns.pipe(
+      Effect.catch((error) =>
+        Effect.logError("The sign-ins of a device the server no longer takes stay for now", error),
+      ),
+    );
     const linkTo = Effect.fn("DesktopBrowser.linkTo")(function* (asked: BrowserLink) {
       if (asked === null) {
         const was = linkedAs;
@@ -728,7 +735,7 @@ export const serveBrowser = (options: {
         // The page may hear of a revoked device before the link does: the sign-ins go all the
         // same, unless the browser was linked again meanwhile, and they are that link's now.
         if (was !== null && (yield* refuses(was.server, was.token)) && linkedAs === null) {
-          yield* browser.forgetSignIns;
+          yield* forgetSignIns;
         }
         return;
       }
@@ -746,7 +753,7 @@ export const serveBrowser = (options: {
           host: browser.hostFor(asked.deviceId),
           refused: refuses(asked.server, token),
           onRefused: Effect.andThen(
-            browser.forgetSignIns,
+            forgetSignIns,
             Effect.sync(() => {
               linkedAs = null;
             }),
