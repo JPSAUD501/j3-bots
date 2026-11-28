@@ -139,19 +139,31 @@ it.layer(Layer.mergeAll(Server.layer(Layer.empty), NodeServices.layer), {
         const clicked = yield* listed(formUrl, (tab) => tab.heldBy?.kind === "person");
         yield* refusedForPerson(clicked);
 
-        // In a new tab, the bot types, and the person's own key holds it for them.
+        // In a new tab, the bot types, and the person's own key holds it for them. The
+        // address is typed once the new tab is in front: typed before, it would be the
+        // form's, or dropped as the new tab comes.
         yield* Effect.promise(async () => {
           await page
             .getByRole("combobox", { name: "Search or type an address" })
             .first()
             .click({ timeout: STEP });
           await page.keyboard.press("Control+t");
+          await page
+            .getByRole("tab", { name: "New tab", selected: true })
+            .first()
+            .waitFor({ timeout: STEP });
         });
         const keysUrl = `${site}/keys`;
         yield* goTo(keysUrl);
+        // The person's address holds the new tab for them, until their hold ends.
+        const addressed = yield* listed(
+          keysUrl,
+          (tab) => tab.where.kind === "desktop" && tab.heldBy?.kind === "person",
+        );
+        assert.notStrictEqual(addressed.ref, form.ref);
         const keys = yield* listed(
           keysUrl,
-          (tab) => tab.where.kind === "desktop" && tab.heldBy === null,
+          (tab) => tab.ref === addressed.ref && tab.heldBy === null,
         );
         yield* browser.tools.act(bot.id, keys.ref, {
           action: "type",
