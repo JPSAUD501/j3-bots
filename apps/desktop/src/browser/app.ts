@@ -200,8 +200,7 @@ export const serveBrowser = (options: {
       Effect.orElseSucceed((): ReadonlyArray<Visit> => []),
     );
     let writing = false;
-    const writeHistory = Effect.gen(function* () {
-      yield* Effect.sleep(HISTORY_WRITE_DELAY);
+    const saveHistory = Effect.gen(function* () {
       writing = false;
       const next = `${historyFile}.next`;
       yield* fs.writeFileString(next, encodeHistory({ visits }));
@@ -209,6 +208,9 @@ export const serveBrowser = (options: {
     }).pipe(
       Effect.catch((error) => Effect.logWarning("Keeping the browser's history failed", error)),
     );
+    const writeHistory = Effect.andThen(Effect.sleep(HISTORY_WRITE_DELAY), saveHistory);
+    // A visit still waiting to be written as the app quits is written then.
+    yield* Effect.addFinalizer(() => Effect.suspend(() => (writing ? saveHistory : Effect.void)));
     const visited = (visit: Visit) => {
       visits = withVisit(visits, visit);
       if (writing) return;
@@ -366,6 +368,7 @@ export const serveBrowser = (options: {
         }
         front.window = null;
         front.panel ??= order.find((ref) => placeOf(ref) === "panel") ?? null;
+        runFork(browser.focus(front.panel));
         changed();
       });
       window
@@ -421,6 +424,8 @@ export const serveBrowser = (options: {
             const index = order.indexOf(event.tab);
             if (at !== undefined && front[at.place] === event.tab) {
               front[at.place] = nextInFront(at.place, event.tab);
+              // The person now looks at the tab that took its place.
+              runFork(browser.focus(front[at.place]));
             }
             if (index !== -1) order.splice(index, 1);
             if (at !== undefined && !at.private && at.url !== "") {
