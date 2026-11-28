@@ -1263,7 +1263,9 @@ export const makeSignIns = Effect.fn("SignIns.make")(function* (
             continue;
           const id = digests.originId(storage.origin);
           const kept = contents.origins.get(id);
-          if (kept !== undefined && !isEmptyStorage(kept.storage)) continue;
+          // What the jar holds wins, and so does its mark of an origin too big to carry.
+          if (kept !== undefined && (kept.tooBig === true || !isEmptyStorage(kept.storage)))
+            continue;
           // Databases are carried as any host's are: within the room left.
           const origin: JarOrigin =
             databaseBytes(storage.indexedDb) > roomFor(id)
