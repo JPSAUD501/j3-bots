@@ -32,6 +32,7 @@ import * as Stream from "effect/Stream";
 import {
   app,
   BaseWindow,
+  type ClearStorageDataOptions,
   type DownloadItem,
   type Rectangle,
   type Session,
@@ -106,6 +107,18 @@ export interface DesktopBrowser {
 const COOKIE_BATCH_MS = 1_000;
 /** How often the storage of the shared tabs' origins is offered to read again. */
 const STORAGE_EVERY_MS = 5 * 60_000;
+
+/**
+ * What signing out clears of an origin besides cookies, as Electron names
+ * it: the site data a sign-in may be kept in.
+ */
+const CLEARED_STORAGE: NonNullable<ClearStorageDataOptions["storages"]> = [
+  "filesystem",
+  "indexdb",
+  "localstorage",
+  "serviceworkers",
+  "cachestorage",
+];
 
 /** 128 random bits, as the protocol asks of a ref a host mints. */
 const randomId = (bytes = 16) =>
@@ -255,6 +268,32 @@ export const makeDesktopBrowser = (options: {
       (window) => Effect.sync(() => window.destroy()),
     );
     const signIns: SignIns = yield* makeSignIns(shared, shelf);
+    /** This run of the browser (`browserRun`): a session cookie missing after a restart was lost to it. */
+    const browserRun = randomId();
+    /**
+     * The shared sign-ins' store's name (`cookieStore`), kept in a file beside
+     * the partition: minted when the file is missing, and again whenever the
+     * store is emptied.
+     */
+    const storeFile = NodePath.join(app.getPath("userData"), "browser-cookie-store");
+    const mintStore = Effect.try({
+      try: () => {
+        const minted = randomId();
+        NodeFS.writeFileSync(storeFile, minted);
+        return minted;
+      },
+      catch: (cause) => failed("page", `The sign-ins' store was not named: ${String(cause)}`),
+    });
+    let cookieStore = yield* Effect.try({
+      try: () => NodeFS.readFileSync(storeFile, "utf8").trim(),
+      catch: (cause) => failed("page", String(cause)),
+    }).pipe(
+      Effect.filterOrFail(
+        (kept) => kept.length >= 16 && kept.length <= 200,
+        () => failed("page", "The sign-ins' store's name is damaged."),
+      ),
+      Effect.catch(() => mintStore),
+    );
 
     const toServer = yield* PubSub.unbounded<BrowserHostEvent>();
     const toApp = yield* PubSub.unbounded<LocalBrowserEvent>();
@@ -311,10 +350,25 @@ export const makeDesktopBrowser = (options: {
       const named = [...new Set(origins.filter((origin) => origin !== null))];
       return named.length === 0 ? Effect.void : tell({ type: "storage.changed", origins: named });
     };
+    /** Whether a frame of a shared tab shows `origin`: a page of it may hold its databases open. */
+    const sharedShows = (origin: string) =>
+      [...entries.values()].some(
+        (entry) =>
+          !entry.tab.private &&
+          !entry.tab.contents.isDestroyed() &&
+          entry.tab.contents.mainFrame.framesInSubtree.some(
+            (frame) => originOf(frame.url) === origin,
+          ),
+      );
+    /** The origins of every frame of `contents`: a sign-in may be kept by an embedded one's. */
+    const framesOrigins = (contents: WebContents) =>
+      contents.isDestroyed()
+        ? []
+        : contents.mainFrame.framesInSubtree.map((frame) => originOf(frame.url));
     const sharedOrigins = () =>
       [...entries.values()]
         .filter((entry) => !entry.tab.private)
-        .map((entry) => originOf(entry.tab.contents.getURL()));
+        .flatMap((entry) => framesOrigins(entry.tab.contents));
     yield* Effect.forkScoped(
       Effect.forever(
         Effect.andThen(
@@ -463,8 +517,7 @@ export const makeDesktopBrowser = (options: {
       entries.delete(entry.tab.ref);
       drivers.delete(entry.tab.ref);
       const { contents } = entry.tab;
-      if (!entry.tab.private && !contents.isDestroyed())
-        yield* tellStorage([originOf(contents.getURL())]);
+      if (!entry.tab.private) yield* tellStorage(framesOrigins(contents));
       yield* Scope.close(entry.scope, Exit.void);
       const home = homes.get(entry.tab.view);
       homes.delete(entry.tab.view);
@@ -560,9 +613,11 @@ export const makeDesktopBrowser = (options: {
         yield* tab.driver.changes.pipe(Stream.runForEach(changed), Effect.forkIn(scope));
         contents.on("page-title-updated", () => run(Effect.flatMap(tab.driver.state, changed)));
         contents.on("did-start-navigation", (details) => {
+          // The page it leaves, with its frames, before they go.
           if (details.isMainFrame && !details.isSameDocument && !tab.private) {
-            const leaving = originOf(contents.getURL());
-            if (leaving !== null && leaving !== originOf(details.url)) run(tellStorage([leaving]));
+            const going = originOf(details.url);
+            const leaving = framesOrigins(contents).filter((origin) => origin !== going);
+            if (leaving.length > 0) run(tellStorage(leaving));
           }
         });
         contents.on("render-process-gone", () => run(ended(entry, true)));
@@ -657,11 +712,14 @@ export const makeDesktopBrowser = (options: {
             input: true,
             cookies: true,
             storage: true,
+            indexedDb: true,
             files: true,
             changeEvents: true,
             privateTabs: true,
             nativeView: true,
           },
+          cookieStore,
+          browserRun,
           tabs,
           ...(privateTabs.length === 0 ? {} : { privateTabs }),
         };
@@ -799,9 +857,39 @@ export const makeDesktopBrowser = (options: {
           known = withCookieChanges(known, changes);
           return signIns.writeCookies(changes);
         }),
-      readStorage: ({ origins }) =>
-        Effect.map(signIns.readStorage(origins), (read) => ({ origins: read })),
-      writeStorage: (origins) => signIns.writeStorage(origins),
+      readStorage: ({ origins, indexedDb }) =>
+        Effect.map(signIns.readStorage(origins, indexedDb), (read) => ({ origins: read })),
+      writeStorage: (origins) => signIns.writeStorage(origins, sharedShows),
+      clearStorage: Effect.fn("DesktopBrowser.clearStorage")(function* (clear) {
+        const cleared = "all" in clear ? null : new Set(clear.origins);
+        const ofThem = (url: string) => {
+          const origin = originOf(url);
+          return origin !== null && (cleared === null || cleared.has(origin));
+        };
+        // The site data of the store itself, then what open tabs of them keep in their memory.
+        for (const origin of cleared ?? [null]) {
+          yield* Effect.tryPromise({
+            try: () =>
+              shared.clearStorageData(
+                origin === null
+                  ? { storages: CLEARED_STORAGE }
+                  : { origin, storages: CLEARED_STORAGE },
+              ),
+            catch: (cause) => failed("page", `Site data was not cleared: ${String(cause)}`),
+          });
+        }
+        for (const entry of entries.values()) {
+          const { contents } = entry.tab;
+          if (entry.tab.private || contents.isDestroyed()) continue;
+          for (const frame of contents.mainFrame.framesInSubtree) {
+            if (!ofThem(frame.url)) continue;
+            yield* Effect.promise(() =>
+              frame.executeJavaScript("sessionStorage.clear()").catch(() => undefined),
+            );
+          }
+          if (ofThem(contents.getURL())) contents.reload();
+        }
+      }),
     });
 
     // -----------------------------------------------------------------------
@@ -884,6 +972,12 @@ export const makeDesktopBrowser = (options: {
       forgetSignIns: Effect.gen(function* () {
         yield* Effect.promise(() => shared.clearData().catch(() => undefined));
         known = new Map();
+        // Emptied: another store, as far as the server can tell.
+        cookieStore = yield* mintStore.pipe(
+          Effect.catch((error) =>
+            Effect.as(Effect.logWarning("The sign-ins' store was not named", error), cookieStore),
+          ),
+        );
       }),
     };
   });

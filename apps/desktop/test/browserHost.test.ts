@@ -52,6 +52,52 @@ const PAGES: Readonly<Record<string, () => HttpServerResponse.HttpServerResponse
       ),
       { contentType: "text/html", headers: { "set-cookie": "seen=1; Path=/" } },
     ),
+  // A sign-in kept as a Firebase app keeps one: in IndexedDB.
+  "/firebase": () =>
+    HttpServerResponse.text(
+      page(
+        "Firebase",
+        `<script>
+           window.signedIn = new Promise((resolve) => {
+             const open = indexedDB.open("firebaseLocalStorageDb", 1);
+             open.onupgradeneeded = () =>
+               open.result.createObjectStore("firebaseLocalStorage", { keyPath: "fbase_key" });
+             open.onsuccess = () => {
+               const db = open.result;
+               const writing = db.transaction("firebaseLocalStorage", "readwrite");
+               writing.objectStore("firebaseLocalStorage").put({
+                 fbase_key: "firebase:authUser:fake-key:[DEFAULT]",
+                 value: { uid: "person-on-the-desktop" },
+               });
+               writing.oncomplete = () => { db.close(); resolve(true); };
+             };
+           });
+         </script>`,
+      ),
+      { contentType: "text/html" },
+    ),
+  // Who the page finds signed in, holding its database open as a Firebase app does.
+  "/whoami": () =>
+    HttpServerResponse.text(
+      page(
+        "Who",
+        `<script>
+           window.who = new Promise((resolve) => {
+             const open = indexedDB.open("firebaseLocalStorageDb");
+             open.onsuccess = () => {
+               const db = open.result;
+               if (!db.objectStoreNames.contains("firebaseLocalStorage")) return resolve(null);
+               const read = db
+                 .transaction("firebaseLocalStorage")
+                 .objectStore("firebaseLocalStorage")
+                 .get("firebase:authUser:fake-key:[DEFAULT]");
+               read.onsuccess = () => resolve(read.result?.value.uid ?? null);
+             };
+           });
+         </script>`,
+      ),
+      { contentType: "text/html" },
+    ),
   // A login whose form, once sent, names how much was typed into it.
   "/login": () =>
     HttpServerResponse.text(
@@ -198,6 +244,9 @@ describe.skipIf(process.platform !== "linux" || process.env["DISPLAY"] === undef
           // The person's private tab, open since before the link (browserHost.main.ts), is named nowhere.
           assert.deepStrictEqual(hello.tabs, []);
           assert.isUndefined(hello.privateTabs);
+          assert.isTrue(hello.capabilities.indexedDb);
+          assert.isString(hello.cookieStore);
+          assert.isString(hello.browserRun);
 
           const events = yield* Queue.unbounded<BrowserHostEvent>();
           yield* host.events.pipe(
@@ -255,6 +304,15 @@ describe.skipIf(process.platform !== "linux" || process.env["DISPLAY"] === undef
           assert.isTrue(Option.isNone(echo));
           const { cookies } = yield* host.readCookies;
           assert.isTrue(cookies.some((cookie) => cookie.name === "from-server"));
+          // Removed by the server, a cookie the site set over plain HTTP is gone.
+          yield* host.writeCookies({
+            set: [],
+            removed: [
+              { name: "seen", domain: "pages.j3test.localhost", hostOnly: true, path: "/" },
+            ],
+          });
+          const after = yield* host.readCookies;
+          assert.isFalse(after.cookies.some((cookie) => cookie.name === "seen"));
 
           // Site storage, written by the server and read by the page.
           yield* host.writeStorage([{ origin: site, localStorage: [{ name: "k", value: "v" }] }]);
@@ -275,6 +333,73 @@ describe.skipIf(process.platform !== "linux" || process.env["DISPLAY"] === undef
           assert.deepStrictEqual(read.origins, [
             { origin: site, localStorage: [{ name: "k", value: "v" }] },
           ]);
+
+          // A sign-in a site keeps in IndexedDB goes from this browser to the server.
+          const auth = `http://auth.j3test.localhost:${port}`;
+          yield* host.navigate({ tab, to: { kind: "url", url: `${auth}/firebase` } });
+          const signedIn = yield* host.evaluate({
+            tab,
+            expression: "window.signedIn",
+            awaitPromise: true,
+          });
+          assert.strictEqual(signedIn.value, true);
+          const taken = yield* host.readStorage({ origins: [auth], indexedDb: true });
+          const databases = taken.origins[0]?.indexedDb ?? [];
+          assert.deepStrictEqual(
+            databases.map((database) => database.name),
+            ["firebaseLocalStorageDb"],
+          );
+          assert.include(JSON.stringify(databases), "person-on-the-desktop");
+          // And one made in another browser, which the server writes, is the site's here.
+          const elsewhere = databases.map((database) => ({
+            ...database,
+            stores: database.stores.map((store) => ({
+              ...store,
+              records: store.records.map((record) => ({
+                ...record,
+                value: {
+                  fbase_key: "firebase:authUser:fake-key:[DEFAULT]",
+                  value: { uid: "person-elsewhere" },
+                },
+              })),
+            })),
+          }));
+          yield* host.navigate({ tab, to: { kind: "url", url: `${site}/` } });
+          const written = yield* host.writeStorage([
+            { origin: auth, localStorage: [], indexedDb: elsewhere },
+          ]);
+          assert.deepStrictEqual(written, {});
+          yield* host.navigate({ tab, to: { kind: "url", url: `${auth}/whoami` } });
+          const who = yield* host.evaluate({ tab, expression: "window.who", awaitPromise: true });
+          assert.strictEqual(who.value, "person-elsewhere");
+          // Deleting a database a page of the origin may hold open waits until no tab shows it.
+          const held = yield* host.writeStorage([
+            { origin: auth, localStorage: [], indexedDb: [] },
+          ]);
+          assert.deepStrictEqual(held, { waiting: [auth] });
+          yield* host.navigate({ tab, to: { kind: "url", url: `${site}/` } });
+          const signedOut = yield* host.writeStorage([
+            { origin: auth, localStorage: [], indexedDb: [] },
+          ]);
+          assert.deepStrictEqual(signedOut, {});
+          const gone = yield* host.readStorage({ origins: [auth], indexedDb: true });
+          assert.deepStrictEqual(gone.origins, [{ origin: auth, localStorage: [], indexedDb: [] }]);
+
+          // Signing out of a site clears its storage, and what its open tab keeps for the session.
+          yield* host.evaluate({
+            tab,
+            expression: `sessionStorage.setItem("s", "1")`,
+            awaitPromise: false,
+          });
+          yield* host.clearStorage({ origins: [site] });
+          // `sessionStorage` lasts across a tab's pages: gone after another, it was cleared.
+          yield* host.navigate({ tab, to: { kind: "url", url: `${site}/` } });
+          const left = yield* host.evaluate({
+            tab,
+            expression: `[localStorage.getItem("k"), sessionStorage.getItem("s")]`,
+            awaitPromise: false,
+          });
+          assert.deepStrictEqual(left.value, [null, null]);
 
           // A pop-up is a tab of its own, which the server hears of and can drive.
           yield* host.act({ tab, action: { action: "click", locator: "text=Open pop-up" } });
