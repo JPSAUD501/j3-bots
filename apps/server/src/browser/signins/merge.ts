@@ -7,16 +7,7 @@ import type {
   BrowserIndexedDb,
   BrowserOriginStorage,
 } from "@j3-bots/contracts";
-import {
-  type Digest,
-  type Digests,
-  emptyStorage,
-  expiredAt,
-  isEmptyStorage,
-  keyOfCookie,
-  normalCookie,
-  storageView,
-} from "./canonical.ts";
+import { type Digest, type Digests, expiredAt, keyOfCookie, normalCookie } from "./canonical.ts";
 
 // How the shared sign-ins and one host's store come to agree
 // (`docs/architecture/server.md`, "Sign-ins"). Nothing here reads or writes
@@ -34,9 +25,36 @@ import {
 // cookie the jar removed with the same value is not brought back. An origin
 // a host's baseline names as `UNKNOWN` was the jar's when the host was new,
 // and is still to be brought together so.
+//
+// An origin's `localStorage` and its databases are brought together apart,
+// each against its own digest in the baseline, so a host that changed one
+// takes nothing of the other back.
 
 /** A baseline's digest for an origin the host was new to: brought together as by a new host. */
-export const UNKNOWN: Digest = "";
+const UNKNOWN: Digest = "";
+
+/**
+ * What a host held of an origin when it last agreed with the jar: its
+ * `localStorage`, and its databases once the two agreed on them.
+ */
+export interface OriginBaseline {
+  readonly local: Digest;
+  readonly databases?: Digest;
+}
+
+/** An origin the host was new to, as its baseline names it. */
+export const UNKNOWN_ORIGIN: OriginBaseline = { local: UNKNOWN };
+
+/** What a host holding `storage` agreed on, its databases included when it has them. */
+export const baselineOf = (digests: Digests, storage: BrowserOriginStorage): OriginBaseline => ({
+  local: digests.localDigest(storage.origin, storage.localStorage),
+  ...(storage.indexedDb === undefined
+    ? {}
+    : { databases: digests.databasesDigest(storage.origin, storage.indexedDb) }),
+});
+
+export const sameBaseline = (a: OriginBaseline | undefined, b: OriginBaseline | undefined) =>
+  a?.local === b?.local && a?.databases === b?.databases;
 
 /** The jar's cookies, by id. */
 export type JarCookies = ReadonlyMap<Digest, BrowserCookie>;
@@ -250,80 +268,129 @@ export const databaseBytes = (databases: ReadonlyArray<BrowserIndexedDb> | undef
 /** What reconciling one origin's storage gives. */
 export interface OriginReconcile {
   readonly jar: JarOrigin | undefined;
-  /** What the host takes, as it reads it. */
+  /** What the host takes, as it reads it: its databases only where they go to it. */
   readonly host: BrowserOriginStorage | undefined;
-  /** The digest the host's baseline keeps for the origin afterwards. */
-  readonly baseline: Digest;
+  /** The host's baseline for the origin once it took `host`, or needed nothing. */
+  readonly baseline: OriginBaseline;
+  /**
+   * Its baseline when it wrote nothing of the origin (`waiting`): what it
+   * holds of the parts it was to take is still what it held. Undefined:
+   * left as it was.
+   */
+  readonly waiting: OriginBaseline | undefined;
 }
+
+/** Which side takes the other's part of an origin: none, when they agree or neither knows. */
+type Taker = "neither" | "host" | "jar";
 
 /**
  * Brings one origin's storage on a host and in the jar together, as
- * `reconcileCookies` does a host's cookies. `read` is the host's, with its
- * databases when the host read them. `baseline` is the host's digest for
- * the origin: undefined when the host has a baseline without the origin,
- * which held nothing then; `none` when the host has no baseline at all.
+ * `reconcileCookies` does a host's cookies, its `localStorage` and its
+ * databases each on its own. `read` is the host's, with its databases when
+ * the host read them. `baseline` is the host's for the origin: undefined
+ * when the host has a baseline without the origin, which held nothing then;
+ * `none` when the host has no baseline for it at all.
  *
- * The databases are compared only when both sides have them. The jar takes
- * the host's along with its `localStorage`, and takes them anyway when it
- * kept none of the origin's yet, as long as they take no more than `room`
- * bytes; databases that take more make the origin `tooBig`, and the jar
- * drops what it kept of them.
+ * - `localStorage`: what the host changed since its baseline goes to the
+ *   jar, unless the site was signed out of since; otherwise the jar's goes
+ *   to the host. With no baseline, the jar's wins unless it is empty.
+ * - Databases, when the host read them: the jar takes them first from a
+ *   host that has some, an empty read teaching it nothing. Once both have
+ *   them, they go three ways as `localStorage` does, against the databases
+ *   the host last agreed on; with none agreed yet, the jar's win unless the
+ *   jar has none. The jar takes no more than `room` bytes of them: more
+ *   makes the origin `tooBig`, and the jar drops what it kept of them.
  */
 export const reconcileOrigin = (input: {
   readonly kept: JarOrigin | undefined;
   readonly read: BrowserOriginStorage;
   readonly room: number;
-  readonly baseline: Digest | undefined | "none";
+  readonly baseline: OriginBaseline | undefined | "none";
   readonly revoked: boolean;
   readonly digests: Digests;
 }): OriginReconcile => {
-  const { kept, read, room, baseline, revoked, digests } = input;
-  const known = kept?.storage.indexedDb !== undefined;
-  const readsDatabases = read.indexedDb !== undefined;
-  const both = known && readsDatabases;
-  const view = storageView(kept?.storage ?? emptyStorage(read.origin), both);
-  const heldDigest = digests.storageDigest(storageView(read, both));
-  const keptDigest = digests.storageDigest(view);
-  /** Which side takes the other's storage. */
-  const taker = ((): "neither" | "host" | "jar" => {
-    if (heldDigest === keptDigest) return "neither";
-    if (baseline === "none") return isEmptyStorage(view) ? "jar" : "host";
-    const was = baseline ?? digests.storageDigest(storageView(emptyStorage(read.origin), both));
-    // A baseline taken before the jar kept the origin's databases names its
-    // `localStorage` alone.
-    const unchanged =
-      heldDigest === was || (both && digests.storageDigest(storageView(read, false)) === was);
-    return unchanged || revoked ? "host" : "jar";
+  const { kept, read, room, revoked, digests } = input;
+  const origin = read.origin;
+  // A baseline without the origin held nothing, databases included.
+  const baseline =
+    input.baseline === "none" || input.baseline?.local === UNKNOWN
+      ? "none"
+      : (input.baseline ??
+        baselineOf(digests, {
+          origin,
+          localStorage: [],
+          ...(read.indexedDb ? { indexedDb: [] } : {}),
+        }));
+
+  const keptLocal = kept?.storage.localStorage ?? [];
+  const heldLocal = digests.localDigest(origin, read.localStorage);
+  const jarLocal = digests.localDigest(origin, keptLocal);
+  const localTaker = ((): Taker => {
+    if (heldLocal === jarLocal) return "neither";
+    if (baseline === "none") return keptLocal.length === 0 ? "jar" : "host";
+    return heldLocal === baseline.local || revoked ? "host" : "jar";
   })();
 
-  const offered =
-    readsDatabases && kept?.tooBig !== true && (taker === "jar" || !known)
-      ? read.indexedDb
-      : undefined;
-  const tooBig = kept?.tooBig === true || (offered !== undefined && databaseBytes(offered) > room);
-  const databases = tooBig ? undefined : (offered ?? kept?.storage.indexedDb);
+  const hostDatabases = read.indexedDb;
+  const jarDatabases = kept?.tooBig === true ? undefined : kept?.storage.indexedDb;
+  const heldDatabases =
+    hostDatabases === undefined ? undefined : digests.databasesDigest(origin, hostDatabases);
+  const databasesTaker = ((): Taker => {
+    if (hostDatabases === undefined || kept?.tooBig === true) return "neither";
+    if (jarDatabases === undefined) return hostDatabases.length > 0 ? "jar" : "neither";
+    if (heldDatabases === digests.databasesDigest(origin, jarDatabases)) return "neither";
+    const was = baseline === "none" ? undefined : baseline.databases;
+    if (was === undefined) return jarDatabases.length === 0 ? "jar" : "host";
+    return heldDatabases === was || revoked ? "host" : "jar";
+  })();
+  const tooBig =
+    kept?.tooBig === true || (databasesTaker === "jar" && databaseBytes(hostDatabases) > room);
+  const takesDatabases = databasesTaker === "jar" && !tooBig;
+  const givesDatabases = databasesTaker === "host";
+
+  const databasesAfter = tooBig ? undefined : takesDatabases ? hostDatabases : jarDatabases;
   const jar: JarOrigin | undefined =
-    taker === "jar" || offered !== undefined
+    localTaker === "jar" || databasesTaker === "jar"
       ? {
           storage: {
-            origin: read.origin,
-            localStorage: taker === "jar" ? read.localStorage : (kept?.storage.localStorage ?? []),
-            ...(databases === undefined ? {} : { indexedDb: databases }),
+            origin,
+            localStorage: localTaker === "jar" ? read.localStorage : keptLocal,
+            ...(databasesAfter === undefined ? {} : { indexedDb: databasesAfter }),
           },
           ...(tooBig ? { tooBig: true } : {}),
         }
       : undefined;
+  const host: BrowserOriginStorage | undefined =
+    localTaker === "host" || givesDatabases
+      ? {
+          origin,
+          localStorage: localTaker === "host" ? keptLocal : read.localStorage,
+          ...(givesDatabases && jarDatabases !== undefined ? { indexedDb: jarDatabases } : {}),
+        }
+      : undefined;
 
-  // What the host holds afterwards, as it will be compared next time.
-  const hostDatabases = taker === "host" && both ? view.indexedDb : read.indexedDb;
-  const held: BrowserOriginStorage = {
-    origin: read.origin,
-    localStorage: taker === "host" ? view.localStorage : read.localStorage,
-    ...(hostDatabases === undefined ? {} : { indexedDb: hostDatabases }),
+  // The host and the jar agree on its databases once the jar keeps them and
+  // the host holds the same.
+  const hostDatabasesAfter = givesDatabases ? jarDatabases : hostDatabases;
+  const agreedDatabases =
+    databasesAfter !== undefined &&
+    hostDatabasesAfter !== undefined &&
+    digests.databasesDigest(origin, databasesAfter) ===
+      digests.databasesDigest(origin, hostDatabasesAfter)
+      ? digests.databasesDigest(origin, databasesAfter)
+      : undefined;
+  const after: OriginBaseline = {
+    local: localTaker === "host" ? jarLocal : heldLocal,
+    ...(agreedDatabases === undefined ? {} : { databases: agreedDatabases }),
   };
-  return {
-    jar,
-    host: taker === "host" ? view : undefined,
-    baseline: digests.storageDigest(storageView(held, databases !== undefined && readsDatabases)),
+  const was = baseline === "none" ? undefined : baseline;
+  const whileWaiting = (): OriginBaseline | undefined => {
+    if (was === undefined) return undefined;
+    const databases = givesDatabases ? was.databases : after.databases;
+    return {
+      local: localTaker === "host" ? was.local : heldLocal,
+      ...(databases === undefined ? {} : { databases }),
+    };
   };
+  return { jar, host, baseline: after, waiting: whileWaiting() };
 };

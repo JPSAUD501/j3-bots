@@ -35,7 +35,7 @@ import { FillField } from "./secrets.ts";
 // least 128 bits of randomness, and the server keeps it.
 
 /** Bumped when a change would break a host and a server built a version apart. */
-export const BROWSER_HOST_PROTOCOL_VERSION = 1;
+export const BROWSER_HOST_PROTOCOL_VERSION = 2;
 
 // ---------------------------------------------------------------------------
 // Sign-ins: cookies and site storage

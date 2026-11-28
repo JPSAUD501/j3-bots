@@ -635,6 +635,109 @@ it.layer(NodeServices.layer)("the shared sign-ins", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect(
+    "while an origin waits, its host's other changes count, and its old databases stay",
+    () =>
+      Effect.gen(function* () {
+        const signIns = yield* signInsIn();
+        const desktop = yield* host({ ...EVENTS, indexedDb: true }, "store-a-0000000000");
+        const server = yield* host({ ...READ_ONLY_AGAIN, indexedDb: true });
+        const onDesktop = yield* attach(signIns, desktop);
+        const onServer = yield* attach(signIns, server);
+        const app = "https://app.x.test";
+        const first = { ...stored(app, "t1"), indexedDb: databasesOf(10) };
+        yield* siteKeeps(desktop, onDesktop, first);
+        yield* server.holdDatabases(app, true);
+        const second = { ...stored(app, "t2"), indexedDb: databasesOf(20) };
+        yield* siteKeeps(desktop, onDesktop, second);
+
+        // The server's page of the app writes its localStorage: that goes to
+        // the jar, and the databases it still holds from before do not.
+        yield* visits(onServer, `${app}/`);
+        yield* server.siteStorage({ ...first, localStorage: [{ name: "token", value: "t3" }] });
+        yield* onServer.flush;
+        assert.deepStrictEqual(
+          (yield* desktop.storage).find((storage) => storage.origin === app),
+          { ...second, localStorage: [{ name: "token", value: "t3" }] },
+        );
+
+        // A failed call makes the server be agreed again while the app waits.
+        yield* server.failNext("storage.write");
+        yield* siteKeeps(desktop, onDesktop, stored("https://z.test", "z1"));
+        yield* TestClock.adjust("5 seconds");
+        yield* settle;
+        assert.include(yield* tokens(server), "https://z.test=z1");
+
+        // A sign-out reached the server while the app waits: signing in to
+        // that site again there is taken, not undone as from before it.
+        yield* signIns.signOutSite("y.test");
+        yield* visits(onServer, "https://y.test/", "tab-2");
+        yield* server.siteStorage({ ...stored("https://y.test", "y1"), indexedDb: [] });
+        yield* onServer.flush;
+        assert.include(yield* tokens(desktop), "https://y.test=y1");
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect("an origin that waits is tried on its own, not over and over", () =>
+    Effect.gen(function* () {
+      const signIns = yield* signInsIn();
+      const desktop = yield* host({ ...EVENTS, indexedDb: true }, "store-a-0000000000");
+      const server = yield* host({ ...READ_ONLY_AGAIN, indexedDb: true });
+      const onDesktop = yield* attach(signIns, desktop);
+      yield* attach(signIns, server);
+      const app = "https://app.x.test";
+      yield* siteKeeps(desktop, onDesktop, { ...stored(app, "t1"), indexedDb: databasesOf(10) });
+      yield* server.holdDatabases(app, true);
+      const newer = { ...stored(app, "t2"), indexedDb: databasesOf(20) };
+      yield* siteKeeps(desktop, onDesktop, newer);
+
+      // A failed call makes the server be agreed again: the app is pending
+      // with the rest, and the rest is done.
+      const other = stored("https://z.test", "z1");
+      yield* server.failNext("storage.write");
+      yield* siteKeeps(desktop, onDesktop, other);
+      yield* TestClock.adjust("5 seconds");
+      yield* settle;
+      assert.include(yield* tokens(server), "https://z.test=z1");
+      const reads = yield* Effect.map(
+        server.calls,
+        (calls) => calls.filter(({ call }) => call === "storage.read").length,
+      );
+      yield* settle;
+      assert.strictEqual(
+        yield* Effect.map(
+          server.calls,
+          (calls) => calls.filter(({ call }) => call === "storage.read").length,
+        ),
+        reads,
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("an empty read of databases teaches the jar nothing", () =>
+    Effect.gen(function* () {
+      const signIns = yield* signInsIn();
+      const app = "https://app.x.test";
+      // A desktop that read no databases agreed on the app's localStorage alone.
+      const before = yield* host(EVENTS, "store-a-0000000000");
+      const onBefore = yield* attach(signIns, before);
+      yield* siteKeeps(before, onBefore, stored(app, "t1"));
+      yield* onBefore.detach;
+      // Updated, it reads databases now, and its app keeps its sign-in there.
+      const desktop = yield* host({ ...EVENTS, indexedDb: true }, "store-a-0000000000");
+      const signedIn = { ...stored(app, "t1"), indexedDb: databasesOf(10) };
+      yield* desktop.siteStorage(signedIn);
+      yield* attach(signIns, desktop);
+
+      // A fresh server browser, whose app has no databases yet, reads it.
+      const server = yield* host({ ...READ_ONLY_AGAIN, indexedDb: true });
+      const onServer = yield* attach(signIns, server);
+      yield* visits(onServer, `${app}/`);
+      yield* onServer.flush;
+      assert.deepStrictEqual(yield* desktop.storage, [signedIn]);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("signing out of all sites empties every host it can reach, and the jar", () =>
     Effect.gen(function* () {
       const signIns = yield* signInsIn();

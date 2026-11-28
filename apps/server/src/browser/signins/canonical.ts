@@ -118,13 +118,12 @@ const stableJson = (value: unknown): string => {
 const cookieKeyText = (key: BrowserCookieKey) =>
   stableJson([key.name, key.domain, key.hostOnly, key.path, key.partition ?? null]);
 
-const storageText = (storage: BrowserOriginStorage) =>
+const localText = (origin: string, localStorage: BrowserOriginStorage["localStorage"]) =>
   stableJson({
-    origin: storage.origin,
-    localStorage: [...storage.localStorage].sort((a, b) =>
+    origin,
+    localStorage: [...localStorage].sort((a, b) =>
       a.name < b.name ? -1 : a.name > b.name ? 1 : 0,
     ),
-    indexedDb: storage.indexedDb,
   });
 
 /** The ids and digests of the sign-ins, under their key. */
@@ -132,7 +131,16 @@ export interface Digests {
   readonly cookieId: (key: BrowserCookieKey) => Digest;
   readonly cookieDigest: (cookie: BrowserCookie) => Digest;
   readonly originId: (origin: string) => Digest;
-  readonly storageDigest: (storage: BrowserOriginStorage) => Digest;
+  /** An origin's `localStorage`, whole. */
+  readonly localDigest: (
+    origin: string,
+    localStorage: BrowserOriginStorage["localStorage"],
+  ) => Digest;
+  /** An origin's databases, whole. */
+  readonly databasesDigest: (
+    origin: string,
+    databases: NonNullable<BrowserOriginStorage["indexedDb"]>,
+  ) => Digest;
   readonly siteId: (site: BrowserSite) => Digest;
   /** A host's `cookieStore`, which names its store and nothing else. */
   readonly storeId: (cookieStore: string) => Digest;
@@ -148,7 +156,9 @@ export const makeDigests = (key: Uint8Array): Digests => {
     cookieId: (cookieKey) => mac("cookie-key", cookieKeyText(cookieKey)),
     cookieDigest: (cookie) => mac("cookie", stableJson(normalCookie(cookie))),
     originId: (origin) => mac("origin", origin),
-    storageDigest: (storage) => mac("storage", storageText(storage)),
+    localDigest: (origin, localStorage) => mac("local", localText(origin, localStorage)),
+    databasesDigest: (origin, databases) =>
+      mac("databases", stableJson({ origin, indexedDb: databases })),
     siteId: (site) => mac("site", site),
     storeId: (cookieStore) => mac("store", cookieStore),
     runId: (browserRun) => mac("run", browserRun),

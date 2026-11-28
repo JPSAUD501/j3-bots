@@ -19,8 +19,9 @@ import { transactional } from "../../persistence/transaction.ts";
 import { NONCE_BYTES, openField, sealField } from "../../secrets/crypto.ts";
 import { sealedOfText, textOfSealed } from "../../secrets/store.ts";
 import { type Digest, isEmptyStorage } from "./canonical.ts";
-import type { JarCookieChanges, JarOrigin } from "./merge.ts";
+import type { JarCookieChanges, JarOrigin, OriginBaseline } from "./merge.ts";
 import Migration0001 from "./migrations/0001_initial.ts";
+import Migration0002 from "./migrations/0002_origin_databases.ts";
 
 // The sign-ins' file (`docs/architecture/server.md`, "Sign-ins"): opened
 // once at start, every row opened into memory then, and each change written
@@ -36,7 +37,10 @@ export const SIGNINS_FILE = "signins.sqlite";
 /** The files SQLite keeps beside the database: what a reset deletes with it. */
 const BESIDE = ["-wal", "-shm", "-journal"] as const;
 
-const migrations = SqliteMigrator.fromRecord({ "1_initial": Migration0001 });
+const migrations = SqliteMigrator.fromRecord({
+  "1_initial": Migration0001,
+  "2_origin_databases": Migration0002,
+});
 
 /**
  * How long a removed cookie's tombstone, an emptied origin, and the baseline
@@ -75,7 +79,7 @@ const StoreRow = Schema.Struct({
   dropped_at: Schema.NullOr(Schema.Int),
 });
 const EntryRow = Schema.Struct({
-  kind: Schema.Literals(["cookie", "origin"]),
+  kind: Schema.Literals(["cookie", "origin", "databases"]),
   id: Schema.String,
   digest: Schema.String,
 });
@@ -104,7 +108,7 @@ export interface StoreBaseline {
   /** The run of its browser then, as the digests name it. */
   readonly run: Digest | undefined;
   readonly cookies: Map<Digest, Digest>;
-  readonly origins: Map<Digest, Digest>;
+  readonly origins: Map<Digest, OriginBaseline>;
   /**
    * What it held was dropped, after 90 days unseen: it is agreed as a new
    * store is, but with its version, so the sign-outs after it still win.
@@ -120,7 +124,7 @@ interface StoreCommit {
   readonly replace: boolean;
   /** Entries set, or removed (undefined). */
   readonly cookies: ReadonlyMap<Digest, Digest | undefined>;
-  readonly origins: ReadonlyMap<Digest, Digest | undefined>;
+  readonly origins: ReadonlyMap<Digest, OriginBaseline | undefined>;
 }
 
 /** One change to the jar, written whole or not at all. */
@@ -205,9 +209,15 @@ const connect = Effect.fn("SignIns.connect")(function* (location: string, key: U
       execute: () => sql`SELECT kind, id, digest FROM store_entries WHERE store = ${id}`,
     })(undefined);
     const cookies = new Map<Digest, Digest>();
-    const origins = new Map<Digest, Digest>();
+    const locals = new Map<Digest, Digest>();
+    const databases = new Map<Digest, Digest>();
     for (const entry of entries)
-      (entry.kind === "cookie" ? cookies : origins).set(entry.id, entry.digest);
+      ({ cookie: cookies, origin: locals, databases })[entry.kind].set(entry.id, entry.digest);
+    const origins = new Map<Digest, OriginBaseline>();
+    for (const [id, local] of locals) {
+      const held = databases.get(id);
+      origins.set(id, held === undefined ? { local } : { local, databases: held });
+    }
     return Option.some<StoreBaseline>({
       version: store.value.version,
       run: store.value.run ?? undefined,
@@ -219,7 +229,7 @@ const connect = Effect.fn("SignIns.connect")(function* (location: string, key: U
 
   const writeEntries = (
     store: Digest,
-    kind: "cookie" | "origin",
+    kind: "cookie" | "origin" | "databases",
     entries: ReadonlyMap<Digest, Digest | undefined>,
   ) =>
     Effect.forEach(
@@ -294,7 +304,18 @@ const connect = Effect.fn("SignIns.connect")(function* (location: string, key: U
             yield* sql`UPDATE stores SET dropped_at = NULL WHERE id = ${store.id}`;
           }
           yield* writeEntries(store.id, "cookie", store.cookies);
-          yield* writeEntries(store.id, "origin", store.origins);
+          // An origin's `localStorage` and databases, each its own entry.
+          const origins = [...store.origins];
+          yield* writeEntries(
+            store.id,
+            "origin",
+            new Map(origins.map(([id, held]) => [id, held?.local])),
+          );
+          yield* writeEntries(
+            store.id,
+            "databases",
+            new Map(origins.map(([id, held]) => [id, held?.databases])),
+          );
         }
       }),
     ).pipe(Effect.orDie);

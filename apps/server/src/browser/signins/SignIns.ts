@@ -7,6 +7,7 @@ import {
   type BrowserHostHello,
   type BrowserOriginStorage,
   type BrowserSignIns,
+  type BrowserStorageWritten,
   type BrowserSite,
   type BrowserTabRef,
   Conflict,
@@ -62,7 +63,10 @@ import {
   reconcileCookies,
   reconcileOrigin,
   takeHostCookies,
-  UNKNOWN,
+  baselineOf,
+  type OriginBaseline,
+  sameBaseline,
+  UNKNOWN_ORIGIN,
 } from "./merge.ts";
 
 // The shared sign-ins of J3 Bots' browser (decision 0110;
@@ -201,7 +205,7 @@ interface Attached {
   readonly events: boolean;
   /** What it holds as of its last agreement with the jar; none until it is first reconciled. */
   baseline:
-    | { readonly cookies: Map<Digest, Digest>; readonly origins: Map<Digest, Digest> }
+    | { readonly cookies: Map<Digest, Digest>; readonly origins: Map<Digest, OriginBaseline> }
     | undefined;
   /** The version up to which every sign-out reached it: a sign-out after wins over its changes. */
   since: number;
@@ -238,6 +242,12 @@ interface Attached {
   retrying: boolean;
   /** Failures in a row, which the wait grows with. */
   failures: number;
+}
+
+/** What a host gave of origins: those read, and those whose databases it could not read. */
+interface OriginReads {
+  readonly reads: ReadonlyArray<BrowserOriginStorage>;
+  readonly unreadable: ReadonlyArray<string>;
 }
 
 /** An address's origin, for http and https alone. */
@@ -529,21 +539,22 @@ export const makeSignIns = Effect.fn("SignIns.make")(function* (
   /**
    * Origins host `a` wrote nothing of, as a page of them may hold their
    * databases open: each stays pending, and is reconciled again on its own
-   * after a wait that grows with its tries, while the rest of the host syncs
-   * on.
+   * after a wait that grows with each try, while the rest of the host syncs
+   * on. An answer while a try is already due changes nothing.
    */
   const waitOn = (a: Attached, ids: ReadonlyArray<Digest>): Effect.Effect<void> =>
     Effect.forEach(
       ids,
       (id) =>
         Effect.suspend(() => {
+          // Pending, but no hold on the host's agreement: a sign-out of its
+          // site reaches it as any other does (`clearHost`).
           a.pending.add(id);
-          a.agreed = false;
           const waiting = a.waiting.get(id) ?? { tries: 0, retrying: false };
           a.waiting.set(id, waiting);
-          waiting.tries += 1;
           if (waiting.retrying) return Effect.void;
           waiting.retrying = true;
+          waiting.tries += 1;
           const wait = RETRY_MS[Math.min(waiting.tries, RETRY_MS.length) - 1] ?? RETRY_MS[0];
           return Effect.forkIn(
             Effect.sleep(wait).pipe(
@@ -561,6 +572,10 @@ export const makeSignIns = Effect.fn("SignIns.make")(function* (
         }),
       { discard: true },
     );
+
+  /** The origins a host wrote nothing of, by id. */
+  const waitingOf = (open: Open, written: BrowserStorageWritten) =>
+    new Set((written.waiting ?? []).map((origin) => open.digests.originId(origin)));
 
   /** Origin `id` is written to host `a`, or needs no write: it waits no more. */
   const settled = (a: Attached, id: Digest) => {
@@ -585,16 +600,16 @@ export const makeSignIns = Effect.fn("SignIns.make")(function* (
             a.host.writeStorage(views.map(([, storage]) => storage)),
           );
           if (Option.isNone(written)) return yield* broke(a);
-          const waiting = new Set(written.value.waiting ?? []);
+          const waiting = waitingOf(open, written.value);
           for (const [id, storage] of views) {
-            if (waiting.has(storage.origin)) continue;
+            if (waiting.has(id)) continue;
             settled(a, id);
-            a.baseline.origins.set(id, open.digests.storageDigest(storage));
+            a.baseline.origins.set(id, baselineOf(open.digests, storage));
           }
           yield* saveBaseline(open, a);
           yield* waitOn(
             a,
-            views.filter(([, storage]) => waiting.has(storage.origin)).map(([id]) => id),
+            views.flatMap(([id]) => (waiting.has(id) ? [id] : [])),
           );
         }),
       { discard: true },
@@ -646,7 +661,7 @@ export const makeSignIns = Effect.fn("SignIns.make")(function* (
       for (const id of ids) {
         const kept = open.contents.origins.get(id);
         if (kept === undefined) a.baseline?.origins.delete(id);
-        else a.baseline?.origins.set(id, digests.storageDigest(hostView(a, kept).storage));
+        else a.baseline?.origins.set(id, baselineOf(digests, hostView(a, kept).storage));
         settled(a, id);
       }
     }
@@ -681,7 +696,9 @@ export const makeSignIns = Effect.fn("SignIns.make")(function* (
   /** `a`'s origins are all reconciled: every sign-out up to its reconcile reached it. */
   const agree = (open: Open, a: Attached) =>
     Effect.suspend(() => {
-      if (a.broken || a.pending.size > 0 || a.agreed) return Effect.void;
+      // An origin a host holds back waits on its own (`waitOn`).
+      const unsettled = [...a.pending].some((id) => !a.waiting.has(id));
+      if (a.broken || unsettled || a.agreed) return Effect.void;
       a.agreed = true;
       // Only a host agreed in full is well again: one whose origins keep
       // failing waits longer each time.
@@ -754,12 +771,12 @@ export const makeSignIns = Effect.fn("SignIns.make")(function* (
       for (const [id, kept] of contents.origins) {
         const known = origins.get(id);
         if (stored === undefined) {
-          origins.set(id, UNKNOWN);
+          origins.set(id, UNKNOWN_ORIGIN);
           a.pending.add(id);
         } else if (
           known === undefined
             ? !isEmptyStorage(hostView(a, kept).storage)
-            : known !== digests.storageDigest(hostView(a, kept).storage)
+            : !sameBaseline(known, baselineOf(digests, hostView(a, kept).storage))
         )
           a.pending.add(id);
       }
@@ -780,13 +797,15 @@ export const makeSignIns = Effect.fn("SignIns.make")(function* (
   const settle = Effect.fn("SignIns.settle")(function* (
     open: Open,
     a: Attached,
-    reads: ReadonlyArray<BrowserOriginStorage>,
+    { reads, unreadable }: OriginReads,
   ) {
     const { contents, digests } = open;
     if (a.baseline === undefined) return;
+    // Left as they are on both sides until they can be read: settled for now.
+    for (const origin of unreadable) settled(a, digests.originId(origin));
     const taken: Array<readonly [Digest, JarOrigin]> = [];
     const given: Array<BrowserOriginStorage> = [];
-    const next = new Map<Digest, Digest>();
+    const next = new Map<Digest, ReturnType<typeof reconcileOrigin>>();
     for (const read of reads) {
       const id = digests.originId(read.origin);
       const known = a.baseline.origins.get(id);
@@ -795,7 +814,7 @@ export const makeSignIns = Effect.fn("SignIns.make")(function* (
         kept: contents.origins.get(id),
         read,
         room: roomFor(id),
-        baseline: known === UNKNOWN ? "none" : known,
+        baseline: known,
         revoked: site !== undefined && revokedSince(open, a.since, [site]),
         digests,
       });
@@ -805,19 +824,20 @@ export const makeSignIns = Effect.fn("SignIns.make")(function* (
         countDatabases(id, plan.jar);
       }
       if (plan.host !== undefined) given.push(plan.host);
-      next.set(id, plan.baseline);
+      next.set(id, plan);
     }
     yield* change(open, { origins: taken });
     let waiting = new Set<Digest>();
     if (given.length > 0) {
       const written = yield* hostCall("take site storage", a.host.writeStorage(given));
       if (Option.isNone(written)) return yield* broke(a);
-      waiting = new Set((written.value.waiting ?? []).map((origin) => digests.originId(origin)));
+      waiting = waitingOf(open, written.value);
     }
-    for (const [id, digest] of next) {
-      if (waiting.has(id)) continue;
-      a.baseline.origins.set(id, digest);
-      settled(a, id);
+    for (const [id, plan] of next) {
+      if (!waiting.has(id)) {
+        a.baseline.origins.set(id, plan.baseline);
+        settled(a, id);
+      } else if (plan.waiting !== undefined) a.baseline.origins.set(id, plan.waiting);
     }
     yield* saveBaseline(open, a);
     yield* waitOn(a, [...waiting]);
@@ -836,6 +856,7 @@ export const makeSignIns = Effect.fn("SignIns.make")(function* (
     const keepsDatabases = (origin: string) =>
       a.indexedDb && contents.origins.get(digests.originId(origin))?.tooBig !== true;
     const reads: Array<BrowserOriginStorage> = [];
+    const unreadable: Array<string> = [];
     for (const indexedDb of [false, true]) {
       const batch = origins.filter((origin) => keepsDatabases(origin) === indexedDb);
       if (batch.length === 0) continue;
@@ -843,16 +864,17 @@ export const makeSignIns = Effect.fn("SignIns.make")(function* (
         "give site storage",
         a.host.readStorage({ origins: batch, indexedDb }),
       );
-      if (Option.isNone(read)) return Option.none<typeof reads>();
+      if (Option.isNone(read)) return Option.none<OriginReads>();
       for (const origin of batch) {
         const held = read.value.origins.find((each) => each.origin === origin);
         // Databases asked for and not read hold what the host could not give:
         // the origin is left as it is, on both sides, until it can be read.
-        if (indexedDb && held !== undefined && held.indexedDb === undefined) continue;
-        reads.push(held ?? storageView(emptyStorage(origin), indexedDb));
+        if (indexedDb && held !== undefined && held.indexedDb === undefined)
+          unreadable.push(origin);
+        else reads.push(held ?? storageView(emptyStorage(origin), indexedDb));
       }
     }
-    return Option.some(reads);
+    return Option.some<OriginReads>({ reads, unreadable });
   });
 
   /** Reconciles one origin of host `a` that is still pending. */
@@ -861,7 +883,7 @@ export const makeSignIns = Effect.fn("SignIns.make")(function* (
     if (open === undefined || !synced(a) || !a.pending.has(id)) return;
     const kept = open.contents.origins.get(id);
     if (kept === undefined) {
-      a.pending.delete(id);
+      settled(a, id);
       return yield* agree(open, a);
     }
     const reads = yield* readOrigins(open, a, [kept.storage.origin]);
@@ -869,12 +891,17 @@ export const makeSignIns = Effect.fn("SignIns.make")(function* (
     yield* settle(open, a, reads.value);
   });
 
-  /** Takes every origin still pending on `a`, one at a time. */
+  /**
+   * Takes every origin pending on `a`, one at a time, each once: one that
+   * waits, or is left pending, is tried again on its own or when it is read.
+   */
   const seed = (a: Attached): Effect.Effect<void> =>
     Effect.gen(function* () {
+      const tried = new Set<Digest>();
       while (synced(a)) {
-        const [next] = a.pending;
+        const next = [...a.pending].find((id) => !tried.has(id) && !a.waiting.has(id));
         if (next === undefined) return;
+        tried.add(next);
         yield* run(syncOrigin(a, next));
       }
     });
