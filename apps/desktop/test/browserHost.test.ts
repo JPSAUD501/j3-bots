@@ -266,7 +266,14 @@ describe.skipIf(process.platform !== "linux" || process.env["DISPLAY"] === undef
           const opened = yield* next(events, "tab.opened");
           assert.strictEqual(opened.opener, tab);
           const popup = opened.page.tab;
-          yield* host.act({ tab: popup, action: { action: "click", locator: "text=Close" } });
+          // The click closes its own page: whether the click is answered before the page
+          // goes, or answers that the tab closed, is a race, and either is right.
+          yield* host.act({ tab: popup, action: { action: "click", locator: "text=Close" } }).pipe(
+            Effect.catchIf(
+              (error) => error.reason === "closed",
+              () => Effect.void,
+            ),
+          );
           yield* next(events, "tab.closed", (event) => event.tab === popup);
 
           // A bot's download is kept for the server, once.
