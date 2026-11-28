@@ -85,7 +85,7 @@ A card nobody answers expires: when its page has been gone for two minutes, or a
 
 ### See and sign out of sites
 
-**Settings → Browser** lists the sites you're signed in to in J3 Bots' browser. Your bots use those sign-ins too. **Sign out** beside a site signs you out of it, and out of its subdomains, everywhere: in the server's browser and on every computer, at once on those connected and first thing on one that connects later. **Sign out of all sites**, at the end, does it for every site, and asks first. Open tabs stay open, signed out.
+**Settings → Browser** lists the sites that keep data in J3 Bots' browser: those whose cookies and site data J3 Bots carries between your browsers, which is how you and your bots stay signed in where you signed in. A site keeps data for more than a sign-in, so one you only read is listed too, and the list doesn't tell which sites you're signed in to. Sites are listed by name: the jar keeps no time a site was last used. **Sign out** beside a site signs you out of it, and out of its subdomains, everywhere: in the server's browser and on every computer, at once on those connected and first thing on one that connects later. **Sign out of all sites**, at the end, does it for every site, and asks first. Open tabs stay open, signed out.
 
 The sign-ins are kept on the server, sealed under the secrets' key ([Server: sign-ins](../architecture/server.md#sign-ins)). If that key changes, they can't be opened: the page says so, and **Sign out of all sites** starts them again, empty. Sign in again where you need to.
 

@@ -1114,7 +1114,7 @@ export const en = {
     "Services your bots can use, such as Notion or GitHub, and the skills they know.",
   "settings.secrets.description": "The logins and keys your bots use without seeing them.",
   "settings.siteSignIns.description":
-    "The sites you’re signed in to in J3 Bots’ browser. Your bots use them too.",
+    "The sites whose cookies and site data J3 Bots carries between your browsers. Where you signed in, you and your bots stay signed in.",
   "settings.devices.description": "This device, and every other one paired with your bots.",
   "settings.devices.paired": "Paired devices",
   "settings.thisPhone": "This phone",
@@ -2051,13 +2051,13 @@ export const en = {
 
   "settings.close": "Close settings",
   "settings.siteSignIns": "Browser",
-  "settings.siteSignIns.sites": "Sites you’re signed in to",
+  "settings.siteSignIns.sites": "Sites that keep data",
   "settings.siteSignIns.none":
-    "You haven’t signed in to any site yet. Sign in to one in a browser tab, and your bots can use it too.",
+    "No site keeps data yet. Open one in a browser tab and sign in if it asks: your bots can use it too.",
   "settings.siteSignIns.unreadable":
-    "Your sign-ins can’t be opened, so the browser isn’t sharing them. If the secrets’ key changed or the file was damaged, sign out of all sites to start over.",
+    "The data the browser keeps for sites can’t be opened, so it isn’t carried between browsers. If the secrets’ key changed or the file was damaged, sign out of all sites to start over.",
   "settings.siteSignIns.locked":
-    "Your sign-ins stay locked until J3 Bots can read your secrets again, so the browser isn’t sharing them. Secrets says what’s wrong.",
+    "The data the browser keeps for sites stays locked until J3 Bots can read your secrets again, so it isn’t carried between browsers. Secrets says what’s wrong.",
   "settings.siteSignIns.tooBig": "Too big to carry between browsers",
   "settings.siteSignIns.signOutSite": "Sign out",
   "settings.siteSignIns.signOutSite.label": "Sign out of {site}",
@@ -2065,7 +2065,7 @@ export const en = {
   "settings.siteSignIns.signOut": "Sign out of all sites",
   "settings.siteSignIns.signOut.title": "Sign out of all sites?",
   "settings.siteSignIns.signOut.body":
-    "The browser forgets every site you signed in to, here and on every computer. Open tabs stay open, signed out. Your bots can’t use those sites until you sign in again.",
+    "The browser clears what every site keeps, here and on every computer. Open tabs stay open, signed out. Your bots can’t use those sites until you sign in again.",
   "settings.siteSignIns.signOut.cancel": "Not now",
   "settings.siteSignIns.signOut.confirm": "Sign out",
   "settings.siteSignIns.signOut.done": "Signed out of all sites.",

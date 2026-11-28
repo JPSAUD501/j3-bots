@@ -1115,7 +1115,7 @@ const sentences = {
     "Serviços que seus bots podem usar, como o Notion ou o GitHub, e as skills que eles conhecem.",
   "settings.secrets.description": "Os logins e as chaves que seus bots usam sem ver.",
   "settings.siteSignIns.description":
-    "Os sites em que você entrou no navegador do J3 Bots. Seus bots também usam esses sites.",
+    "Os sites cujos cookies e dados o J3 Bots leva entre seus navegadores. Onde você entrou, você e seus bots continuam conectados.",
   "settings.devices.description": "Este dispositivo, e cada um dos outros pareados com seus bots.",
   "settings.devices.paired": "Dispositivos pareados",
   "settings.thisPhone": "Este celular",
@@ -2078,13 +2078,13 @@ const sentences = {
 
   "settings.close": "Fechar configurações",
   "settings.siteSignIns": "Navegador",
-  "settings.siteSignIns.sites": "Sites em que você entrou",
+  "settings.siteSignIns.sites": "Sites com dados guardados",
   "settings.siteSignIns.none":
-    "Você ainda não entrou em nenhum site. Entre num site numa aba do navegador, e seus bots também vão poder usá-lo.",
+    "Nenhum site guarda dados ainda. Abra um numa aba do navegador e entre se ele pedir: seus bots também vão poder usá-lo.",
   "settings.siteSignIns.unreadable":
-    "Não dá para abrir seus logins, então o navegador não está compartilhando nenhum. Se a chave dos segredos mudou ou o arquivo se danificou, saia de todos os sites para começar de novo.",
+    "Não dá para abrir os dados que o navegador guarda dos sites, então eles não vão de um navegador para outro. Se a chave dos segredos mudou ou o arquivo se danificou, saia de todos os sites para começar de novo.",
   "settings.siteSignIns.locked":
-    "Seus logins ficam trancados até o J3 Bots conseguir ler seus segredos de novo, então o navegador não está compartilhando nenhum. Em Segredos você vê o que houve.",
+    "Os dados que o navegador guarda dos sites ficam trancados até o J3 Bots conseguir ler seus segredos de novo, então eles não vão de um navegador para outro. Em Segredos você vê o que houve.",
   "settings.siteSignIns.tooBig": "Grande demais para levar entre navegadores",
   "settings.siteSignIns.signOutSite": "Sair",
   "settings.siteSignIns.signOutSite.label": "Sair de {site}",
@@ -2092,7 +2092,7 @@ const sentences = {
   "settings.siteSignIns.signOut": "Sair de todos os sites",
   "settings.siteSignIns.signOut.title": "Sair de todos os sites?",
   "settings.siteSignIns.signOut.body":
-    "O navegador esquece todos os sites em que você entrou, aqui e em todos os computadores. As abas abertas continuam abertas, sem login. Seus bots só voltam a usar esses sites depois que você entrar de novo.",
+    "O navegador apaga o que todos os sites guardam, aqui e em todos os computadores. As abas abertas continuam abertas, sem login. Seus bots só voltam a usar esses sites depois que você entrar de novo.",
   "settings.siteSignIns.signOut.cancel": "Agora não",
   "settings.siteSignIns.signOut.confirm": "Sair",
   "settings.siteSignIns.signOut.done": "Você saiu de todos os sites.",

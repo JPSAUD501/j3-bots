@@ -45,8 +45,9 @@ export const v0_16_0: WhatsNewRelease = {
           "Os sites em que você e seus bots entram ficam guardados a sete chaves e vão junto entre o seu computador e o servidor. Os bots podem preencher um login salvo sem nunca ver a senha, e os sites em que eles já tinham entrado continuam aqui.",
       },
       where: {
-        en: "Settings → Browser lists every site, to sign out of one or of all.",
-        "pt-BR": "Configurações → Navegador mostra cada site, para sair de um ou de todos.",
+        en: "Settings → Browser lists the sites that keep data, to sign out of one or of all.",
+        "pt-BR":
+          "Configurações → Navegador mostra os sites com dados guardados, para sair de um ou de todos.",
       },
     },
     {

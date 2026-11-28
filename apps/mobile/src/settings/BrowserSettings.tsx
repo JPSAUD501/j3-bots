@@ -12,8 +12,8 @@ import { useSay } from "../toast.tsx";
 import { Button } from "../ui.tsx";
 
 /**
- * Settings' Browser page: the sites the person is signed in to in J3 Bots'
- * browser, which their bots use too, followed while the page is in front,
+ * Settings' Browser page: the sites that keep data in J3 Bots' browser,
+ * which is how the person and their bots stay signed in, followed while the page is in front,
  * each with its own Sign out; then signing out of all of them, which asks
  * first since it ends every one at once. A server older than the list shows
  * none, only signing out of all; sign-ins locked with the secrets can be

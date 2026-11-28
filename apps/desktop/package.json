@@ -26,6 +26,7 @@
     "@j3-bots/desktop-bridge": "workspace:*",
     "@j3-bots/i18n": "workspace:*",
     "@j3-bots/processes": "workspace:*",
+    "@j3-bots/prompts": "workspace:*",
     "@j3-bots/release": "workspace:*",
     "@j3-bots/server": "workspace:*",
     "@types/ws": "8.18.2",
