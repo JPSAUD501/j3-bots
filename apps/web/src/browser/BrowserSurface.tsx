@@ -11,6 +11,7 @@ import {
 import { cn } from "../lib/cn";
 import { BotCursors } from "./BotCursors";
 import { PageField } from "./PageField";
+import { keepPicture } from "./pictures";
 import { buttonOf, buttonsOf, modifiersOf, pagePoint, type Size, wheelDelta } from "./input";
 
 /** Two presses this close in time and place are one double click. */
@@ -75,6 +76,8 @@ export function BrowserSurface({
   const field = useRef<HTMLTextAreaElement>(null);
   const [pictureSize, setPictureSize] = useState<Size | null>(null);
 
+  // Kept with the address the page has as the picture comes, for the bot's card beside it.
+  const keep = useEffectEvent((jpeg: Uint8Array) => keepPicture(tab, jpeg, Date.now(), address));
   // Each picture is drawn, then acknowledged, so the server sends the next only once it shows.
   // The newest picture the view holds when this mounts, as a kept view's, is drawn first.
   useEffect(() => {
@@ -100,6 +103,7 @@ export function BrowserSurface({
         if (target.width !== bitmap.width) target.width = bitmap.width;
         if (target.height !== bitmap.height) target.height = bitmap.height;
         context.drawImage(bitmap, 0, 0);
+        keep(picture.jpeg);
         setPictureSize({ width: bitmap.width, height: bitmap.height });
         bitmap.close();
       } catch {

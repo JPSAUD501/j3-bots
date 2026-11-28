@@ -2,7 +2,7 @@
 import { siteOf, tabFaces, type ViewerTab } from "@j3-bots/client-runtime/presentation";
 import type { BotId, BrowserTabRef } from "@j3-bots/contracts";
 import { Plus, X } from "lucide-react-native";
-import type { ReactNode } from "react";
+import { type ReactNode, useState } from "react";
 import { Image, View } from "react-native";
 import { useAnimatedStyle, useSharedValue, withTiming } from "react-native-reanimated";
 import { Icon } from "../components/Icon.tsx";
@@ -12,12 +12,15 @@ import { useI18n } from "../i18n.ts";
 import { PressScale } from "../press.tsx";
 import { Text } from "../text.tsx";
 import { Faces } from "./Faces.tsx";
-import { useLastPicture } from "./pictures.ts";
+import { useStill } from "./still.ts";
+import { TabPlaceholder } from "./TabPlaceholder.tsx";
 import { useSideSwipe } from "./swipe.ts";
 
 /**
- * Every tab, two to a row: each with its last picture, its name and the
- * faces of the bots on it. A press shows it; a swipe sideways or its ×
+ * Every tab, two to a row: each with the last picture of its page, or its
+ * title and site until there is one, its name and the faces of the bots on
+ * it. A still of each tab not shown here is taken as the list opens, one
+ * after another. A press shows it; a swipe sideways or its ×
  * closes it, with Undo under the list rather than a question. New opens a
  * tab at an address. A server from before shared tabs opens and closes none.
  */
@@ -72,6 +75,7 @@ export function TabGrid({
           <TabCard
             key={tab.ref}
             tab={tab}
+            open={open}
             current={tab.ref === shown}
             canClose={canChange}
             waitsForPerson={waitsForPerson}
@@ -86,6 +90,7 @@ export function TabGrid({
 
 function TabCard({
   tab,
+  open,
   current,
   canClose,
   waitsForPerson,
@@ -93,6 +98,8 @@ function TabCard({
   onClose,
 }: {
   readonly tab: ViewerTab;
+  /** The list is open: only then are stills taken. */
+  readonly open: boolean;
   readonly current: boolean;
   readonly canClose: boolean;
   readonly waitsForPerson: ReadonlySet<BotId>;
@@ -100,7 +107,17 @@ function TabCard({
   readonly onClose: () => void;
 }) {
   const { t } = useI18n();
-  const picture = useLastPicture(tab.ref);
+  const [width, setWidth] = useState(0);
+  const picture = useStill(
+    {
+      ref: tab.ref,
+      url: tab.url,
+      loading: tab.loading,
+      viewedHere: current || tab.holder._tag === "you" || tab.holder._tag === "taken",
+    },
+    width,
+    open,
+  );
   const name = tab.title === "" ? siteOf(tab.url) || t("browser.panel.newTab") : tab.title;
   const offset = useSharedValue(0);
   const swipe = useSideSwipe({
@@ -132,8 +149,13 @@ function TabCard({
         onPress={onShow}
         className={`overflow-hidden rounded-lg border bg-background ${current ? "border-foreground" : "border-border"}`}
       >
-        <View className="aspect-[4/5] w-full bg-muted">
-          {picture !== null && (
+        <View
+          className="aspect-[4/5] w-full bg-muted"
+          onLayout={(event) => setWidth(event.nativeEvent.layout.width)}
+        >
+          {picture === null ? (
+            <TabPlaceholder title={tab.title} url={tab.url} />
+          ) : (
             <Image source={{ uri: picture.uri }} resizeMode="cover" className="size-full" />
           )}
         </View>

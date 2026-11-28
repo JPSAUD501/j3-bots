@@ -3,7 +3,7 @@ import type { BrowserViewHandle } from "@j3-bots/client-runtime";
 import { siteOf, tabFaces, type ViewerTab } from "@j3-bots/client-runtime/presentation";
 import type { BrowserTabRef } from "@j3-bots/contracts";
 import { AppWindowIcon } from "lucide-react";
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useEffectEvent, useState, useSyncExternalStore } from "react";
 import { useI18n } from "../../app/context";
 import { BotCursors } from "../BotCursors";
 import { useBrowser } from "../context";
@@ -13,7 +13,7 @@ import { viewLockName } from "../kept";
 import { whileFree } from "../locks";
 import { opening } from "../source";
 import { useWaitingBots } from "../waiting";
-import { keepPicture, useLastPicture } from "./pictures";
+import { keepPicture, useLastPicture } from "../pictures";
 
 const noChange = () => () => {};
 
@@ -183,16 +183,20 @@ function Picture({ tab, live }: { readonly tab: ViewerTab; readonly live: boolea
     observer.observe(element);
     return () => observer.disconnect();
   }, [element]);
+  // Kept with the address the page has as the picture comes.
+  const keep = useEffectEvent((jpeg: Uint8Array) =>
+    keepPicture(tab.ref, jpeg, Date.now(), tab.url),
+  );
   useEffect(() => {
     if (view === null) return;
     return view.picture.subscribe(() => {
       const picture = view.picture.get();
       if (picture === null) return;
-      keepPicture(tab.ref, picture.jpeg, Date.now());
+      keep(picture.jpeg);
       // A card shows only the newest picture: the next may come at once.
       view.ack(picture.sequence);
     });
-  }, [view, tab.ref]);
+  }, [view]);
   // The picture is drawn whole, in its own shape, inside the card's.
   const drawn =
     page === null || width === 0

@@ -88,6 +88,13 @@ export {
 export { parseServerAddress, type ServerAddressProblem } from "./serverAddress.ts";
 export { Cell, type Readable, waitFor } from "./Store.ts";
 export {
+  oneAtATime,
+  type OpenStillView,
+  STILL_TIMEOUT,
+  type StillView,
+  takeStill,
+} from "./stills.ts";
+export {
   type CardAnswer,
   type RoutineCardCommand,
   type Conversation,

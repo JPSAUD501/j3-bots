@@ -80,6 +80,48 @@ describe("a finger on the page", () => {
     ]);
   });
 
+  it("does not scroll the page as a finger moving the view across drifts, or goes on past its edge", () => {
+    // A desktop page that fills the view's height: the view moves only across.
+    const across: TouchScene = {
+      ...scene,
+      picture: { width: 400, height: 250 },
+      page: { width: 1280, height: 800 },
+      zoom: { scale: 2.4, x: -280, y: 0 },
+    };
+    let touch = touchStarted(NO_TOUCH, [{ x: 100, y: 300 }], across).touch;
+    touch = touchMoved(touch, [{ x: 120, y: 304 }], across).touch;
+    const drifting = touchMoved(touch, [{ x: 200, y: 330 }], across);
+    expect(drifting.zoom).toEqual({ scale: 2.4, x: -180, y: 0 });
+    expect(drifting.send).toEqual([]);
+    const past = touchMoved(drifting.touch, [{ x: 400, y: 340 }], {
+      ...across,
+      zoom: { scale: 2.4, x: -180, y: 0 },
+    });
+    expect(past.zoom).toEqual({ scale: 2.4, x: 0, y: 0 });
+    expect(past.send).toEqual([]);
+  });
+
+  it("scrolls a page fitted to the view whichever way the finger first went", () => {
+    let touch = touchStarted(NO_TOUCH, [{ x: 200, y: 300 }], scene).touch;
+    touch = touchMoved(touch, [{ x: 209, y: 295 }], scene).touch;
+    const moved = touchMoved(touch, [{ x: 200, y: 200 }], scene);
+    // 100 view points up at the fitted width are 400 page pixels down the page.
+    expect(moved.send).toEqual([
+      { type: "wheel", x: 800, y: 800, deltaX: 0, deltaY: 400, modifiers: 0 },
+    ]);
+  });
+
+  it("scrolls the page as a finger that started down goes on past the view's top edge", () => {
+    let touch = touchStarted(NO_TOUCH, [{ x: 200, y: 300 }], zoomed).touch;
+    touch = touchMoved(touch, [{ x: 204, y: 320 }], zoomed).touch;
+    const moved = touchMoved(touch, [{ x: 300, y: 400 }], zoomed);
+    // Across, the view takes the finger; down, 100 view points at twice the fitted width are 200 page pixels.
+    expect(moved.zoom).toEqual({ scale: 2, x: -100, y: 0 });
+    expect(moved.send).toEqual([
+      { type: "wheel", x: 1000, y: 800, deltaX: 0, deltaY: -200, modifiers: 0 },
+    ]);
+  });
+
   it("right-clicks once held still, and the rest of the touch does nothing", () => {
     const down = touchStarted(NO_TOUCH, [{ x: 100, y: 100 }], scene);
     const held = touchHeld(down.touch, scene);

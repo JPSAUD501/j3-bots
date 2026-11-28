@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { DrawnRect, PageSize, Point } from "./browser.ts";
 
-// How a live view draws a picture of the page: fitted to the view's width at
-// the top, then zoomed and moved by the person's fingers, or following a bot
-// at a size that reads. Zooming changes only the picture on the device,
+// How a live view draws a picture of the page: resting so it covers the
+// view, then zoomed and moved by the person's fingers, or following a bot at
+// a size that reads. Zooming changes only the picture on the device,
 // never the page, which the bots and the computer see as it is.
 
 /** A size in the view's points. */
@@ -54,6 +54,21 @@ export const keptInView = (zoom: Zoom, picture: Size, view: Size): Zoom => {
     x: width <= view.width ? (view.width - width) / 2 : clamp(zoom.x, view.width - width, 0),
     y: height <= view.height ? 0 : clamp(zoom.y, view.height - height, 0),
   };
+};
+
+/**
+ * Where the view rests until the person moves it or it follows a bot. A page
+ * of the view's shape, or taller, is fitted to the view's width at its top.
+ * One wider than the view's shape, as a computer's page on a phone, is
+ * zoomed until it fills the view's height, its middle across in view, so
+ * the view is not left mostly empty; the person pinches out to see all of it.
+ */
+export const restingZoom = (picture: Size, view: Size): Zoom => {
+  if (picture.height <= 0 || picture.height >= view.height) {
+    return keptInView(NO_ZOOM, picture, view);
+  }
+  const scale = Math.min(view.height / picture.height, MAX_ZOOM);
+  return keptInView({ scale, x: (view.width - picture.width * scale) / 2, y: 0 }, picture, view);
 };
 
 const distance = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.y - b.y);
