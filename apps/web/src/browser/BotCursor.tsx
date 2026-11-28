@@ -32,7 +32,10 @@ const GLIDE_STEPS = 16;
  * smile; `onAnswered` says so, for the click to be answered once. While the person
  * holds the tab (`held`) it steps aside and fades, its face surprised, then
  * waiting, with its tag open. Under reduced motion it moves at once, and
- * neither bobs nor squashes.
+ * neither bobs nor squashes. `still`, it moves only for what the bot does:
+ * it glides, clicks, opens its tag and steps aside, but does not bob, and
+ * its face holds still, answering nothing (drawn in a page, whose every
+ * change is a new picture for whoever watches it).
  */
 export function BotCursor({
   bot,
@@ -43,6 +46,7 @@ export function BotCursor({
   tagged,
   held = false,
   thinking = false,
+  still = false,
 }: {
   readonly bot: PointerBot;
   readonly at: { readonly x: number; readonly y: number };
@@ -53,6 +57,7 @@ export function BotCursor({
   readonly tagged: boolean;
   readonly held?: boolean;
   readonly thinking?: boolean;
+  readonly still?: boolean;
 }) {
   const ink = `var(--bot-${resolveAvatar(bot.profile.avatar).color})`;
   const reduced = useReducedMotion();
@@ -98,7 +103,7 @@ export function BotCursor({
 
   // Thinking: a small bob up and back.
   useEffect(() => {
-    if (!thinking || reduced) return;
+    if (!thinking || reduced || still) return;
     const run = bobbing.current?.animate(
       [
         { transform: "translateY(0)" },
@@ -108,7 +113,7 @@ export function BotCursor({
       { duration: pointer.bobPeriod, easing: "ease-in-out", iterations: Infinity },
     );
     return () => run?.cancel();
-  }, [thinking, reduced]);
+  }, [thinking, reduced, still]);
 
   // A click: the arrow goes down from its point and springs back, a ring spreads, the face smiles.
   const clickedAt = useEffectEvent((click: number) => {
@@ -212,6 +217,7 @@ export function BotCursor({
             seed={bot.id}
             state={held && waits ? "waiting" : "idle"}
             size={pointer.face}
+            still={still}
           />
           {bot.profile.name}
         </span>

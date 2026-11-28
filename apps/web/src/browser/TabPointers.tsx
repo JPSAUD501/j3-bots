@@ -30,7 +30,7 @@ interface ShownCursor {
  * page of `viewport`'s size, wherever they are drawn: over a view's picture
  * (`BotCursors`), or in the page itself on the desktop. `place` names the
  * tab and its page: when it changes, every pointer shows again where it
- * next points.
+ * next points. `still` pointers move only for what happens (`BotCursor`).
  */
 export function TabPointers({
   source,
@@ -38,12 +38,14 @@ export function TabPointers({
   viewport,
   bots,
   held,
+  still = false,
 }: {
   readonly source: CursorSource;
   readonly place: string;
   readonly viewport: Size | null;
   readonly bots: ReadonlyArray<PointerOnTab>;
   readonly held: boolean;
+  readonly still?: boolean;
 }) {
   const [cursors, setCursors] = useState<ReadonlyMap<BotId, ShownCursor>>(new Map());
   const [shownOn, setShownOn] = useState(place);
@@ -118,6 +120,7 @@ export function TabPointers({
         tagged={tagged}
         held={held}
         thinking={!held && bot.thinking}
+        still={still}
       />,
     ];
   });

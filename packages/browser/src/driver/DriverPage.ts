@@ -869,6 +869,9 @@ export const makeDriverPage = (options: {
               // A stream that took this one's place keeps the page's screencast.
               if (watching !== mine) return;
               watching = undefined;
+              // What it holds is let go, as when another takes its place: the page owes it nothing.
+              if (delivered !== undefined) letGo(delivered.session);
+              if (waiting !== undefined) letGo(waiting.session);
               delivered = undefined;
               waiting = undefined;
               yield* attempt(() => cdp.send("Page.stopScreencast")).pipe(Effect.ignore);

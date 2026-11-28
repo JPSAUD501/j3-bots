@@ -491,6 +491,31 @@ it.effect(
     }).pipe(Effect.scoped, Effect.provide(TestDomain.layer)),
 );
 
+it.effect(
+  "gives the host the picture it waits on when the last socket leaves still drawing an older one",
+  () =>
+    Effect.gen(function* () {
+      const { host, laptop, phone, ref } = yield* scene;
+      const fast = yield* fakeLink;
+      const slow = yield* fakeLink;
+      const fastSocket = yield* connect(laptop, ref, fast.link);
+      const slowSocket = yield* connect(phone, ref, slow.link);
+      yield* eventually(Effect.map(callsOf(host, "tab.screencast"), (n) => n === 1));
+      yield* host.paint(ref);
+      yield* fast.nextWhere(isPicture);
+      yield* slow.nextWhere(isPicture);
+      yield* fast.say({ type: "ack" });
+      yield* eventually(Effect.map(ackedFrames(host), (frames) => frames.length === 1));
+      // The host's second goes to the fast socket and waits for the slow one, which draws the first.
+      yield* host.paint(ref);
+      yield* fast.nextWhere(isPicture);
+      yield* Fiber.interrupt(fastSocket);
+      yield* Fiber.interrupt(slowSocket);
+      yield* eventually(Effect.map(ackedFrames(host), (frames) => frames.length === 2));
+      assert.deepStrictEqual(yield* ackedFrames(host), [1, 2]);
+    }).pipe(Effect.scoped, Effect.provide(TestDomain.layer)),
+);
+
 it.effect("asks the host again for a screencast that failed, while the feed lives", () =>
   Effect.gen(function* () {
     const { host, laptop, phone, ref } = yield* scene;

@@ -262,7 +262,6 @@ export function createCdpRelayConnection(
     // Playwright asks for this on every page; the host emulates focus only while it is in use.
     if (command.method === "Emulation.setFocusEmulationEnabled") return answer({});
     if (command.method === "Page.screencastFrameAck" && child === undefined) {
-      // A restart keeps the slot too, or restarting would let frames past an unacknowledged one.
       if (unackedFrames.get(sessionId) === params["sessionId"]) {
         unackedFrames.delete(sessionId);
         const skipped = skippedFrames.get(sessionId);
@@ -278,6 +277,11 @@ export function createCdpRelayConnection(
       return answer({});
     }
     if (command.method === "Page.stopScreencast" && child === undefined) {
+      // A start while the screencast runs keeps the slot, which its consumer still
+      // acknowledges: no frame passes an unacknowledged one. A stop ends the screencast: no
+      // one acknowledges its frames, and the next numbers its own afresh, so a slot kept
+      // now would hold back every frame of the next.
+      unackedFrames.delete(sessionId);
       skippedFrames.delete(sessionId);
       releaseHeldFramesWithoutHolders();
     }

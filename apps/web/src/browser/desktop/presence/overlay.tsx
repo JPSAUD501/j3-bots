@@ -182,6 +182,8 @@ function Pointers() {
       viewport={size}
       bots={now.bots}
       held={now.held}
+      // A watched page's every change is a picture for each watcher: an unchanging page sends none.
+      still
     />
   );
 }

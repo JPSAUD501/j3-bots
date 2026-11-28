@@ -170,4 +170,28 @@ describe("createCdpRelayConnection", () => {
     assert.deepStrictEqual(frames(), [1, 3]);
     assert.deepStrictEqual(acked, [1, 2]);
   });
+
+  it("starts a new screencast free of the frame an old one left unacknowledged", async () => {
+    const { relay, call, written, acked } = relayOf();
+    await call("Target.setAutoAttach", { autoAttach: true });
+    const frames = () => written.filter((message) => isMethod(message, "Page.screencastFrame"));
+    await call("Page.startScreencast", {}, "j3-tab-page");
+    relay.event("Page.screencastFrame", { sessionId: 1, data: "" }, undefined);
+    relay.event("Page.screencastFrame", { sessionId: 1, data: "" }, undefined);
+    assert.deepStrictEqual(acked, [1]);
+    // Its watcher goes away with the first frame unacknowledged and the second held.
+    await call("Page.stopScreencast", {}, "j3-tab-page");
+    assert.deepStrictEqual(acked, [1, 1]);
+    // Chromium numbers a new run's frames afresh; the first is the new watcher's.
+    await call("Page.startScreencast", {}, "j3-tab-page");
+    relay.event("Page.screencastFrame", { sessionId: 2, data: "" }, undefined);
+    assert.strictEqual(frames().length, 2);
+    assert.deepStrictEqual(acked, [1, 1, 2]);
+  });
 });
+
+const isMethod = (message: unknown, method: string) =>
+  typeof message === "object" &&
+  message !== null &&
+  "method" in message &&
+  message.method === method;
