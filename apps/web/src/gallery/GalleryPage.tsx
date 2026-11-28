@@ -2264,11 +2264,17 @@ function BrowserLineSection() {
         </div>
       </Labeled>
       {scout !== undefined && wren !== undefined && (
-        <Labeled label="Each bot's own pointer, in its color, with its face and name; the name folds to the face once still, a click rings, and both fade while the person holds the tab">
+        <Labeled label="Each bot's own pointer: an arrow in its color that never turns, with a tag of its face and name while it moves or clicks; thinking, it bobs; while the person holds the tab it steps aside, faded, its tag open">
           <div className="relative h-44 max-w-xl overflow-hidden rounded-lg border border-border bg-background">
-            <BotCursor bot={scout} at={{ x: 0.12, y: 0.2 }} clicked={null} named />
-            <BotCursor bot={wren} at={{ x: 0.55, y: 0.25 }} clicked={1} named={false} />
-            <BotCursor bot={scout} at={{ x: 0.3, y: 0.62 }} clicked={null} named faded />
+            <BotCursor bot={scout} at={{ x: 0.12, y: 0.2 }} clicked={null} tagged />
+            <BotCursor
+              bot={wren}
+              at={{ x: 0.55, y: 0.25 }}
+              clicked={null}
+              tagged={false}
+              thinking
+            />
+            <BotCursor bot={scout} at={{ x: 0.3, y: 0.5 }} clicked={null} tagged={false} held />
           </div>
         </Labeled>
       )}

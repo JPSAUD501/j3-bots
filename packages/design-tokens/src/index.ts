@@ -6,6 +6,7 @@ export * from "./botPalette.ts";
 export * from "./builtInThemes.ts";
 export * from "./connectorGlyphs.ts";
 export * from "./names.ts";
+export * from "./pointer.ts";
 export * from "./springs.ts";
 export * from "./theme.ts";
 export * from "./themeCss.ts";

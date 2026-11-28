@@ -496,7 +496,7 @@ export function LivePage({
             address={address}
             viewport={page}
             onIt={onIt}
-            faded={holding}
+            held={holding}
           />
         </div>
       )}
