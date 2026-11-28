@@ -31,7 +31,6 @@ import * as Stream from "effect/Stream";
 import {
   app,
   BrowserWindow,
-  type DownloadItem,
   type IpcMainEvent,
   type IpcMainInvokeEvent,
   ipcMain,
@@ -39,7 +38,7 @@ import {
 } from "electron";
 import { electronFetch } from "../electronFetch.ts";
 import { onWayland } from "../displayServer.ts";
-import { makeCommand, zoomPage } from "./commands.ts";
+import { type Download, makeCommand, zoomPage } from "./commands.ts";
 import { recentVisits, suggestionsFor } from "./history.ts";
 import { makeHistoryStore } from "./historyStore.ts";
 import { type DesktopBrowser, type LocalBrowserEvent, makeDesktopBrowser } from "./host.ts";
@@ -78,13 +77,6 @@ interface Pane {
   placement: BrowserPlacement;
   /** The tab drawn as a still picture while the page covers it. */
   still: BrowserTabRef | null;
-}
-
-interface Download {
-  readonly item: DownloadItem;
-  entry: DesktopDownload;
-  /** Where a bot's file went once it became the person's. */
-  handedOver: string | null;
 }
 
 /**

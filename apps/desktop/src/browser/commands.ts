@@ -28,11 +28,11 @@ export const zoomPage = (contents: WebContents, to: "in" | "out" | "reset") => {
 };
 
 /** A download the list shows, with the file behind it. */
-interface Download {
+export interface Download {
   readonly item: DownloadItem;
-  readonly entry: DesktopDownload;
+  entry: DesktopDownload;
   /** Where a bot's file went once it became the person's. */
-  readonly handedOver: string | null;
+  handedOver: string | null;
 }
 
 /** Carries out the person's commands on `browser`. */

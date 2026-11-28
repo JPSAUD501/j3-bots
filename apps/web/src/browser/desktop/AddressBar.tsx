@@ -119,7 +119,7 @@ export function AddressBar({
             className="absolute inset-y-0 start-0 w-0 animate-[address-fill_8s_var(--ease-out)_forwards] bg-muted-strong/60"
           />
         )}
-        {leading}
+        {leading !== undefined && <span className="relative flex shrink-0">{leading}</span>}
         {tab?.private === true ? (
           <EyeOffIcon aria-hidden className="relative size-4 shrink-0 text-muted-foreground" />
         ) : (
@@ -184,7 +184,7 @@ export function AddressBar({
             {t("desktopBrowser.private")}
           </span>
         )}
-        {trailing}
+        {trailing !== undefined && <span className="relative flex shrink-0">{trailing}</span>}
       </div>
       {listed && (
         <ul
