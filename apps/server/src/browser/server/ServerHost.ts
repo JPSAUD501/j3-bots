@@ -23,6 +23,7 @@ import {
   makeDriverPage,
   type PageHost,
 } from "@j3-bots/browser";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Encoding from "effect/encoding/Hex";
 import * as Exit from "effect/Exit";
@@ -121,6 +122,11 @@ export interface ServerHost extends PageHost {
 interface Tab {
   readonly driver: DriverPage;
   readonly scope: Scope.Closeable;
+  /**
+   * The folder of the files put for the tab's uploads, under a name of the
+   * server's own: a ref is not the server's to trust as a path.
+   */
+  readonly files: string;
 }
 
 /** 128 bits of randomness, in hex. */
@@ -222,6 +228,11 @@ export const launchServerHost = (input: {
     const hostScope = yield* Effect.scope;
     const events = yield* PubSub.unbounded<BrowserHostEvent>();
     yield* Effect.addFinalizer(() => PubSub.shutdown(events));
+    // A browser that exits, or crashes, ends the host's events, so the
+    // server knows it is gone.
+    const disconnected = Deferred.makeUnsafe<void>();
+    browser.once("disconnected", () => Deferred.doneUnsafe(disconnected, Exit.void));
+    if (!browser.isConnected()) Deferred.doneUnsafe(disconnected, Exit.void);
     const tabs = new Map<BrowserTabRef, Tab>();
     const drivers = new Map<BrowserTabRef, DriverPage>();
     /** Downloads reported and not taken yet. */
@@ -243,7 +254,8 @@ export const launchServerHost = (input: {
         catch: hostErrorOf,
       }).pipe(Effect.tapError(() => Scope.close(scope, Exit.void)));
       const driver = yield* makeDriverPage({ tab: ref, page, cdp }).pipe(Scope.provide(scope));
-      tabs.set(ref, { driver, scope });
+      const files = path.join(filesRoot, yield* randomHex);
+      tabs.set(ref, { driver, scope, files });
       drivers.set(ref, driver);
       yield* Effect.addFinalizer(() =>
         Effect.sync(() => {
@@ -251,7 +263,7 @@ export const launchServerHost = (input: {
           drivers.delete(ref);
         }).pipe(
           // The files put for the tab's uploads go with it.
-          Effect.andThen(fs.remove(path.join(filesRoot, ref), { recursive: true, force: true })),
+          Effect.andThen(fs.remove(files, { recursive: true, force: true })),
           Effect.ignore,
         ),
       ).pipe(Scope.provide(scope));
@@ -275,16 +287,18 @@ export const launchServerHost = (input: {
           }).pipe(Effect.ignore),
         );
       });
-      // What a page downloads is reported once it finished. The server takes
+      // What a page downloads is reported as it starts, when the server
+      // decides whose it is, and again once it finished. The server takes
       // it, or lets it go, by its id.
       page.on("download", (download) => {
         run(
           Effect.gen(function* () {
+            const id = BrowserDownloadId.make(`dl_${yield* randomHex}`);
+            yield* publish({ type: "download.started", tab: ref, download: id });
             const failure = yield* Effect.promise(() => download.failure());
             if (failure !== null) return;
             const file = yield* Effect.promise(() => download.path());
             const info = yield* fs.stat(file);
-            const id = BrowserDownloadId.make(`dl_${yield* randomHex}`);
             downloads.set(id, download);
             yield* publish({
               type: "download.finished",
@@ -296,18 +310,22 @@ export const launchServerHost = (input: {
           }).pipe(Effect.ignore),
         );
       });
-      let crashed = false;
-      page.on("crash", () => {
-        crashed = true;
+      /** The tab is gone: its scope closes and the server hears it once. */
+      const ended = Effect.fnUntraced(function* (crashed: boolean) {
+        if (tabs.get(ref)?.driver !== driver) return;
+        yield* Scope.close(scope, Exit.void);
+        yield* publish({ type: "tab.closed", tab: ref, crashed });
+      });
+      // A crashed page stays open and answers nothing more, so it is closed here.
+      page.once("crash", () => {
+        run(
+          ended(true).pipe(
+            Effect.andThen(Effect.promise(() => page.close().catch(() => undefined))),
+          ),
+        );
       });
       page.once("close", () => {
-        run(
-          Effect.gen(function* () {
-            if (!tabs.has(ref)) return;
-            yield* Scope.close(scope, Exit.void);
-            yield* publish({ type: "tab.closed", tab: ref, crashed });
-          }),
-        );
+        run(ended(false));
       });
       return driver;
     });
@@ -321,8 +339,9 @@ export const launchServerHost = (input: {
       new BrowserHostError({ reason: "page", detail: "The file could not be kept." });
 
     const putFile: PageHost["putFile"] = Effect.fn("ServerHost.putFile")(function* (request) {
-      if (!tabs.has(request.tab)) return yield* new BrowserHostError({ reason: "no-tab" });
-      const folder = path.join(filesRoot, request.tab, yield* randomHex);
+      const tab = tabs.get(request.tab);
+      if (tab === undefined) return yield* new BrowserHostError({ reason: "no-tab" });
+      const folder = path.join(tab.files, yield* randomHex);
       yield* fs.makeDirectory(folder, { recursive: true }).pipe(Effect.mapError(filesFailed));
       const file = path.join(folder, request.name);
       yield* fs.writeFile(file, request.bytes).pipe(Effect.mapError(filesFailed));
@@ -469,7 +488,7 @@ export const launchServerHost = (input: {
 
     return {
       hello,
-      events: Stream.fromPubSub(events),
+      events: Stream.fromPubSub(events).pipe(Stream.interruptWhen(Deferred.await(disconnected))),
       open,
       close,
       ...tabCalls,

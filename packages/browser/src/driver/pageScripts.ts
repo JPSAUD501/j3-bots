@@ -256,8 +256,15 @@ export const fillTarget = (
   return element;
 };
 
-/** How many characters the field holds. */
-export const fieldLength = (field: PageInputElement): number => field.value.length;
+/**
+ * How many characters the field holds while it has the focus; null once the
+ * focus moved, so the value is typed only where the fill checked.
+ */
+export const focusedLength = (field: PageInputElement): number | null => {
+  let active = document.activeElement;
+  while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
+  return field.isConnected && active === field ? field.value.length : null;
+};
 
 /** Whether the field still has the focus and holds more than `before` characters. */
 export const typedInto = (field: PageInputElement, before: number): boolean => {

@@ -118,7 +118,7 @@ const scene = Effect.gen(function* () {
   const phone = yield* pairDevice("Phone");
   const browser = yield* Browser;
   const host = yield* makeFakePageHost({ host: { kind: "desktop", device: laptop } });
-  yield* browser.attachHost(host);
+  yield* browser.attachHost(host, yield* host.hello.pipe(Effect.orDie));
   const ref = BrowserTabRef.make(`tab-${++tabs}`);
   yield* browser.openForPerson({ device: laptop, ref, url: "https://example.com/" });
   return { browser, host, laptop, phone, ref };

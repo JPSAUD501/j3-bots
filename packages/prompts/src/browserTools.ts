@@ -367,6 +367,8 @@ export const BROWSER_NOTES = {
   botHolds: (name: string) =>
     `${name} kept acting on this tab for 20 seconds, so nothing was done. Try again in a moment, or open a tab of your own.`,
   closed: "The tab closed, so nothing was done.",
+  serverFull:
+    "The server's browser already runs as many tabs as it keeps, each in use by a bot or watched by your user, so nothing was done. Close a tab you no longer need with `browser_close`, or try again in a moment.",
   uploadMissing: (path: string) =>
     `Nothing was uploaded: there is no file at ${path} in your workspace.`,
   uploadOutside: (path: string) =>

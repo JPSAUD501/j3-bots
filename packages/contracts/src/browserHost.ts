@@ -333,13 +333,27 @@ export type BrowserDownloadId = typeof BrowserDownloadId.Type;
 export const BrowserFileName = Schema.String.check(
   Schema.isMinLength(1),
   Schema.isMaxLength(MAX_ATTACHMENT_NAME_LENGTH),
-  Schema.makeFilter((name: string) => !/[\\/\u0000]/.test(name) || "a name without a folder"),
+  Schema.makeFilter(
+    (name: string) =>
+      (!/[\\/\u0000]/.test(name) && name !== "." && name !== "..") || "a name without a folder",
+  ),
 );
 
 /** A file's bytes as they cross the connection: at most an attachment's size. */
 const FileBytes = Schema.Uint8ArrayFromBase64.check(
   Schema.makeFilter(
     (bytes: Uint8Array) => bytes.length <= MAX_ATTACHMENT_SIZE || "at most an attachment's size",
+  ),
+);
+
+/** How many bytes of a download one message carries, well under a socket message's limit. */
+export const BROWSER_DOWNLOAD_CHUNK_BYTES = 1024 * 1024;
+
+/** A piece of a download's bytes, as it crosses the connection. */
+const FileChunk = Schema.Uint8ArrayFromBase64.check(
+  Schema.makeFilter(
+    (bytes: Uint8Array) =>
+      (bytes.length > 0 && bytes.length <= BROWSER_DOWNLOAD_CHUNK_BYTES) || "one chunk",
   ),
 );
 
@@ -361,10 +375,13 @@ const FileBytes = Schema.Uint8ArrayFromBase64.check(
  * - `cookies.changed`: cookies the host's pages or sites changed. Never the
  *   host's own writes from `cookies.write`, and never a private tab's.
  * - `storage.changed`: origins whose storage may have changed, to read.
- * - `download.finished`: a file finished downloading while a bot's action
- *   ran on the tab. The host keeps it until the server takes it
- *   (`download.take`) or the host restarts. What the person downloads
- *   stays with them and is not sent.
+ * - `download.started`: a download began on the tab. The server decides
+ *   then whose it is, so a bot that acts on the tab later never takes it.
+ *   A desktop reports only one that began while a bot's action ran there:
+ *   what the person downloads stays with them and is not reported at all.
+ * - `download.finished`: a download the host reported started is
+ *   complete, under the same id. The host keeps it until the server takes
+ *   it (`download.take`) or the host restarts.
  */
 export const BrowserHostEvent = Schema.Union([
   Schema.Struct({
@@ -392,6 +409,11 @@ export const BrowserHostEvent = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("storage.changed"),
     origins: Schema.Array(Schema.String),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("download.started"),
+    tab: BrowserTabRef,
+    download: BrowserDownloadId,
   }),
   Schema.Struct({
     type: Schema.Literal("download.finished"),
@@ -543,7 +565,9 @@ export const BrowserHostRpcs = RpcGroup.make(
    * the focused element in its top frame fits `field`. With `submit`, Enter
    * follows; after a password it always does, and a password the page keeps
    * on screen afterwards is taken out of the field again. The value is never
-   * logged, returned or kept.
+   * logged, returned or kept. A host that shows the tab in a window of its
+   * own holds the person's input there until the fill ends, so no key of
+   * theirs lands in the field among the value's.
    */
   Rpc.make("tab.fill", {
     payload: {
@@ -580,14 +604,17 @@ export const BrowserHostRpcs = RpcGroup.make(
     error: BrowserHostError,
   }),
   /**
-   * The bytes of a download `download.finished` reported. The host lets
-   * the file go once it answers: a download already taken, or never
-   * reported, fails as `invalid-target`.
+   * The bytes of a download `download.finished` reported, in order, in
+   * chunks of at most `BROWSER_DOWNLOAD_CHUNK_BYTES`, so no message passes
+   * the server's limit on what a socket sends it. The host lets the file go
+   * once it answers: a download already taken, or never reported, fails as
+   * `invalid-target`.
    */
   Rpc.make("download.take", {
     payload: { download: BrowserDownloadId },
-    success: Schema.Struct({ bytes: FileBytes }),
+    success: FileChunk,
     error: BrowserHostError,
+    stream: true,
   }),
   /** Every cookie the shared sign-ins hold on this host. */
   Rpc.make("cookies.read", {

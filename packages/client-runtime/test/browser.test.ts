@@ -58,6 +58,18 @@ const shared = (ref: BrowserTabRef) =>
     return Option.getOrThrow(found);
   });
 
+/**
+ * `botId` opens a tab in the server's browser, the server one for every test,
+ * closed once the test ends: the browser keeps only so many tabs in use.
+ */
+const opensForTheTest = (botId: BotId) =>
+  Effect.gen(function* () {
+    const ref = yield* Server.botOpens(botId, LOGIN);
+    const browser = yield* Server.Browser;
+    yield* Effect.addFinalizer(() => browser.close(ref).pipe(Effect.ignore));
+    return ref;
+  });
+
 /** A paired client, and a bot with a tab open in the server's browser, which the client lists. */
 const scene = Effect.gen(function* () {
   const { code } = yield* (yield* Server.Devices).startPairing;
@@ -66,7 +78,7 @@ const scene = Effect.gen(function* () {
   yield* waitFor(connection.state, (state) => state._tag === "connected");
   const commandId = yield* (yield* Actions).commandId;
   const bot = yield* connection.call((rpc) => rpc["bot.create"]({ commandId, name: "Scout" }));
-  const opened = yield* Server.botOpens(bot.id, LOGIN);
+  const opened = yield* opensForTheTest(bot.id);
   const ref = yield* tabRef(bot.id);
   assert.strictEqual(ref, opened);
   const host = yield* (yield* Server.TestServerBrowser).running;
@@ -226,7 +238,7 @@ it.layer(server, { excludeTestServices: true })("the bot's browser", (it) => {
         app.call((rpc) => rpc["bot.create"]({ commandId, name: "Scout" })),
       );
       if (created._tag !== "Success") return yield* Effect.die("The bot was not created");
-      yield* Server.botOpens(created.value.id, LOGIN);
+      yield* opensForTheTest(created.value.id);
       const tabs = app.openBrowserTabs(created.value.id);
       const listed = yield* waitFor(
         tabs.state,

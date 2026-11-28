@@ -103,12 +103,21 @@ export interface FakePageHost extends PageHost {
   readonly acked: Effect.Effect<
     ReadonlyArray<{ readonly tab: BrowserTabRef; readonly frame: number }>
   >;
-  /** A file a bot's action downloaded on the tab: kept, and reported as `download.finished`. */
+  /** A file a bot's action downloaded on the tab: kept, and reported as started, then finished. */
   readonly download: (
     tab: BrowserTabRef,
     name: string,
     bytes: Uint8Array,
   ) => Effect.Effect<BrowserDownloadId>;
+  /** A download that starts on the tab now, and finishes, kept, once `finish` runs. */
+  readonly startDownload: (
+    tab: BrowserTabRef,
+    name: string,
+    bytes: Uint8Array,
+  ) => Effect.Effect<{
+    readonly download: BrowserDownloadId;
+    readonly finish: Effect.Effect<void>;
+  }>;
   /** The files given for uploads, by the path the host answered. */
   readonly files: Effect.Effect<ReadonlyMap<string, Uint8Array>>;
 }
@@ -241,6 +250,24 @@ export const makeFakePageHost = (
     const privateTabs = () =>
       [...tabs.values()].filter((tab) => tab.private).map((tab) => tab.state);
 
+    let downloadsStarted = 0;
+    const startDownload: FakePageHost["startDownload"] = (tab, name, bytes) =>
+      Effect.gen(function* () {
+        downloadsStarted += 1;
+        const id = BrowserDownloadId.make(`download-${downloadsStarted}`);
+        yield* PubSub.publish(events, { type: "download.started", tab, download: id });
+        const finish = Effect.suspend(() => {
+          downloads.set(id, bytes);
+          return PubSub.publish(events, {
+            type: "download.finished",
+            tab,
+            download: id,
+            name,
+            size: bytes.length,
+          });
+        }).pipe(Effect.asVoid);
+        return { download: id, finish };
+      });
     const host: FakePageHost = {
       // Built at each call: the tabs and the store are the host's as they are now.
       hello: record("host.hello").pipe(
@@ -524,18 +551,12 @@ export const makeFakePageHost = (
         }),
       fills: Effect.sync(() => [...fills]),
       acked: Effect.sync(() => [...acked]),
+      startDownload,
       download: (tab, name, bytes) =>
         Effect.gen(function* () {
-          const id = BrowserDownloadId.make(`download-${downloads.size + 1}`);
-          downloads.set(id, bytes);
-          yield* PubSub.publish(events, {
-            type: "download.finished",
-            tab,
-            download: id,
-            name,
-            size: bytes.length,
-          });
-          return id;
+          const started = yield* startDownload(tab, name, bytes);
+          yield* started.finish;
+          return started.download;
         }),
       files: Effect.sync(() => new Map(files)),
     };

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
+  BROWSER_DOWNLOAD_CHUNK_BYTES,
   type BrowserActOutcome,
   type BrowserCookie,
   type BrowserCookieChanges,
@@ -15,6 +16,7 @@ import {
   type BrowserPageState,
   type BrowserScreencastFrame,
   type BrowserTabRef,
+  MAX_ATTACHMENT_SIZE,
 } from "@j3-bots/contracts";
 import * as Effect from "effect/Effect";
 import type * as Rpc from "effect/rpc/Rpc";
@@ -186,7 +188,8 @@ export const pageHostHandlers = (host: PageHost) =>
     "tab.input": (input) => host.input(input),
     "tab.probe": (input) => host.probe(input),
     "files.put": (input) => host.putFile(input),
-    "download.take": (input) => host.takeDownload(input),
+    "download.take": (input) =>
+      Stream.unwrap(Effect.map(host.takeDownload(input), ({ bytes }) => chunksOf(bytes))),
     "tab.fill": (input) => host.fill(input),
     "cookies.read": () => host.readCookies,
     "cookies.write": ({ changes }) => host.writeCookies(changes),
@@ -196,6 +199,38 @@ export const pageHostHandlers = (host: PageHost) =>
 
 /** A host's client, as the server holds one: a call the connection loses fails as `closed`. */
 export type PageHostClient = RpcClient.RpcClient<BrowserHostRpc, RpcClientError.RpcClientError>;
+
+/** A download's bytes as `download.take` sends them, a chunk to a message. */
+const chunksOf = (bytes: Uint8Array) =>
+  Stream.fromIterable(
+    Array.from({ length: Math.ceil(bytes.length / BROWSER_DOWNLOAD_CHUNK_BYTES) }, (_, index) =>
+      bytes.subarray(
+        index * BROWSER_DOWNLOAD_CHUNK_BYTES,
+        (index + 1) * BROWSER_DOWNLOAD_CHUNK_BYTES,
+      ),
+    ),
+  );
+
+const sizeOf = (chunks: ReadonlyArray<Uint8Array>) =>
+  chunks.reduce((total, chunk) => total + chunk.length, 0);
+
+const joined = (chunks: ReadonlyArray<Uint8Array>) => {
+  const bytes = new Uint8Array(sizeOf(chunks));
+  let at = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, at);
+    at += chunk.length;
+  }
+  return bytes;
+};
+
+/** A host that sends more of a download than an attachment may hold. */
+const tooLarge = Effect.fail(
+  new BrowserHostError({
+    reason: "too-large",
+    detail: "The download is larger than an attachment.",
+  }),
+);
 
 const lost = (cause: RpcClientError.RpcClientError) =>
   Effect.fail(new BrowserHostError({ reason: "closed", detail: cause.message.slice(0, 500) }));
@@ -226,7 +261,17 @@ export const remotePageHost = (client: PageHostClient): PageHost => ({
   probe: (input) => client["tab.probe"](input).pipe(Effect.catchTag("RpcClientError", lost)),
   putFile: (input) => client["files.put"](input).pipe(Effect.catchTag("RpcClientError", lost)),
   takeDownload: (input) =>
-    client["download.take"](input).pipe(Effect.catchTag("RpcClientError", lost)),
+    client["download.take"](input).pipe(
+      Stream.runFoldEffect(
+        (): Array<Uint8Array> => [],
+        (chunks, chunk) => {
+          chunks.push(chunk);
+          return sizeOf(chunks) <= MAX_ATTACHMENT_SIZE ? Effect.succeed(chunks) : tooLarge;
+        },
+      ),
+      Effect.map((chunks) => ({ bytes: joined(chunks) })),
+      Effect.catchTag("RpcClientError", lost),
+    ),
   fill: (input) => client["tab.fill"](input).pipe(Effect.catchTag("RpcClientError", lost)),
   readCookies: client["cookies.read"]().pipe(Effect.catchTag("RpcClientError", lost)),
   writeCookies: (changes) =>

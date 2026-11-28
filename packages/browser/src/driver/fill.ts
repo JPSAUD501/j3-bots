@@ -12,7 +12,7 @@ import type { CDPSession, Frame, Page } from "playwright-core";
 import {
   emptyField,
   fieldGone,
-  fieldLength,
+  focusedLength,
   type FillInput,
   fillTarget,
   selectField,
@@ -181,9 +181,11 @@ export const makeFill = (options: {
         ),
       ),
     );
-    const length = answer(yield* onField("about the field", objectId, fieldLength, []));
-    const before = Option.getOrElse(Option.filter(length, isLength), () => 0);
+    // Read last before the typing: a focus that moved since the check takes nothing.
+    const length = answer(yield* onField("about the field", objectId, focusedLength, []));
     if (navigated) return { _tag: "refused", reason: "navigated" } as const;
+    const before = Option.getOrNull(Option.filter(length, isLength));
+    if (before === null) return { _tag: "refused", reason: "field" } as const;
     yield* send("to the typing", () =>
       cdp.send("Input.insertText", { text: Redacted.value(request.value) }),
     );

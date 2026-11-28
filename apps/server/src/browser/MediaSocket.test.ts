@@ -128,13 +128,16 @@ const scene = Effect.gen(function* () {
   const fake = yield* makeFakePageHost({ host: { kind: "desktop", device: paired.deviceId } });
   let jpeg: Uint8Array | null = null;
   const browser = yield* Browser;
-  yield* browser.attachHost({
-    ...fake,
-    screencast: (input) =>
-      fake
-        .screencast(input)
-        .pipe(Stream.map((frame) => (jpeg === null ? frame : { ...frame, jpeg }))),
-  });
+  yield* browser.attachHost(
+    {
+      ...fake,
+      screencast: (input) =>
+        fake
+          .screencast(input)
+          .pipe(Stream.map((frame) => (jpeg === null ? frame : { ...frame, jpeg }))),
+    },
+    yield* fake.hello.pipe(Effect.orDie),
+  );
   const ref = BrowserTabRef.make(`media-tab-${n}`);
   yield* browser.openForPerson({ device: paired.deviceId, ref, url: "https://example.com/" });
   const callsOf = (call: string) =>

@@ -44,7 +44,8 @@ export const route = HttpRouter.add(
         if (hello.host.kind !== "desktop" || hello.host.device !== device.value) {
           return yield* Effect.logWarning("A browser host said it was another computer's");
         }
-        const attached = yield* browser.attachHost(host);
+        // Attached with the hello just checked, so the host cannot answer another.
+        const attached = yield* browser.attachHost(host, hello);
         yield* Effect.raceFirst(attached.ended, auth.revoked(device.value));
       }),
     ).pipe(Effect.ignore);

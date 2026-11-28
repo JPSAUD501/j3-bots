@@ -274,57 +274,54 @@ export const layer = Layer.effect(
         ),
       );
 
-    /** The feed of `ref`, opened for its first socket; none once the tab is gone. */
-    const feedOf = (ref: BrowserTabRef, size: ViewSize) =>
-      feedLock.withPermits(1)(
-        Effect.gen(function* () {
-          const existing = feeds.get(ref);
-          if (existing !== undefined) return Option.some(existing);
-          const scope = yield* Scope.make();
-          const watched = yield* browser.watch(ref).pipe(Scope.provide(scope));
-          if (Option.isNone(watched)) {
-            yield* Scope.close(scope, Exit.void);
-            return Option.none<Feed>();
-          }
-          const feed: Feed = {
-            ref,
-            watched: watched.value,
-            scope,
-            lock: yield* Semaphore.make(1),
-            viewers: new Set(),
-            host: Option.none(),
-            latest: null,
-            owed: null,
-            viewport: null,
-            tab: null,
-            generation: 0,
-            nextSeq: 0,
-          };
-          feeds.set(ref, feed);
-          const background = <A, E>(effect: Effect.Effect<A, E>) =>
-            Effect.forkIn(Effect.ignore(effect), scope);
-          yield* background(screencast(feed, size));
-          yield* background(control(feed));
-          yield* background(cursors(feed));
-          yield* background(
-            feed.watched.closed.pipe(
-              Effect.andThen(
-                // The sockets on the tab when it closes, not when the feed opened.
-                feed.lock.withPermits(1)(
-                  Effect.suspend(() =>
-                    Effect.forEach(
-                      [...feed.viewers],
-                      (viewer) => Deferred.succeed(viewer.ended, GONE),
-                      { discard: true },
-                    ),
-                  ),
+    /** The feed of `ref`, opened for its first socket; none once the tab is gone. Under `feedLock`. */
+    const feedOf = Effect.fnUntraced(function* (ref: BrowserTabRef, size: ViewSize) {
+      const existing = feeds.get(ref);
+      if (existing !== undefined) return Option.some(existing);
+      const scope = yield* Scope.make();
+      const watched = yield* browser.watch(ref).pipe(Scope.provide(scope));
+      if (Option.isNone(watched)) {
+        yield* Scope.close(scope, Exit.void);
+        return Option.none<Feed>();
+      }
+      const feed: Feed = {
+        ref,
+        watched: watched.value,
+        scope,
+        lock: yield* Semaphore.make(1),
+        viewers: new Set(),
+        host: Option.none(),
+        latest: null,
+        owed: null,
+        viewport: null,
+        tab: null,
+        generation: 0,
+        nextSeq: 0,
+      };
+      feeds.set(ref, feed);
+      const background = <A, E>(effect: Effect.Effect<A, E>) =>
+        Effect.forkIn(Effect.ignore(effect), scope);
+      yield* background(screencast(feed, size));
+      yield* background(control(feed));
+      yield* background(cursors(feed));
+      yield* background(
+        feed.watched.closed.pipe(
+          Effect.andThen(
+            // The sockets on the tab when it closes, not when the feed opened.
+            feed.lock.withPermits(1)(
+              Effect.suspend(() =>
+                Effect.forEach(
+                  [...feed.viewers],
+                  (viewer) => Deferred.succeed(viewer.ended, GONE),
+                  { discard: true },
                 ),
               ),
             ),
-          );
-          return Option.some(feed);
-        }),
+          ),
+        ),
       );
+      return Option.some(feed);
+    });
 
     /** The socket left: the feed closes with its last socket. */
     const leave = (feed: Feed, viewer: Viewer) =>
@@ -370,6 +367,8 @@ export const layer = Layer.effect(
     ) {
       if (Option.isNone(feed.host)) return;
       if (!(yield* browser.personUsed(feed.ref, viewer.deviceId))) return;
+      // Their input takes the tab at once, and reaches the page once a fill's typing ended.
+      yield* feed.watched.control.afterFill;
       yield* apply(feed.host.value);
     });
 
@@ -490,7 +489,7 @@ export const layer = Layer.effect(
         keepAlive,
         revoked,
         Deferred.await(viewer.ended),
-      ]).pipe(Effect.ensuring(leave(feed, viewer)));
+      ]);
       if (closing !== null) yield* closeAs(link, closing);
     });
 
@@ -500,8 +499,6 @@ export const layer = Layer.effect(
       readonly size: ViewSize;
       readonly link: ClientLink;
     }) {
-      const feed = yield* feedOf(input.ref, input.size);
-      if (Option.isNone(feed)) return yield* closeAs(input.link, GONE);
       const viewer: Viewer = {
         deviceId: input.deviceId,
         link: input.link,
@@ -509,8 +506,20 @@ export const layer = Layer.effect(
         inFlight: null,
         pending: null,
       };
-      yield* join(feed.value, viewer);
-      yield* serve(feed.value, viewer);
+      // Found or opened, and joined, in one step: the last socket's leave
+      // cannot close the feed between the two.
+      const entered = feedLock.withPermits(1)(
+        Effect.gen(function* () {
+          const feed = yield* feedOf(input.ref, input.size);
+          if (Option.isSome(feed)) yield* join(feed.value, viewer);
+          return feed;
+        }),
+      );
+      yield* Effect.acquireUseRelease(
+        entered,
+        (feed) => (Option.isNone(feed) ? closeAs(input.link, GONE) : serve(feed.value, viewer)),
+        (feed) => (Option.isNone(feed) ? Effect.void : leave(feed.value, viewer)),
+      );
     });
 
     return BrowserViewers.of({ connect });

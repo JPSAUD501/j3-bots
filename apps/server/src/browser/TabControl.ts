@@ -10,6 +10,7 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import type * as Stream from "effect/Stream";
@@ -94,6 +95,12 @@ export interface TabControl {
    * waits for a bot's running action to finish, and goes before queued
    * ones. `stillHeld` fails once a person took the tab meanwhile.
    */
+  /**
+   * Returns once no fill's work runs on the tab. What a person does reaches
+   * the page only after it: their input takes the tab at once, but the host
+   * is not typing a login while their click moves the focus.
+   */
+  readonly afterFill: Effect.Effect<void>;
   readonly fill: <A, E, R>(
     run: (stillHeld: Effect.Effect<void, FillRefused>) => Effect.Effect<A, E, R>,
   ) => Effect.Effect<A, E | FillRefused, R>;
@@ -148,6 +155,8 @@ const sameHands = (left: Holder | null, right: Holder | null): boolean => {
 export const makeTabControl: Effect.Effect<TabControl, never, Scope.Scope> = Effect.gen(
   function* () {
     let holder: Holder | null = null;
+    /** The fill whose work runs now, done once it ends. */
+    let filling: Deferred.Deferred<void> | null = null;
     let acting: BotId | null = null;
     let epoch = 0;
     let closed = false;
@@ -233,12 +242,10 @@ export const makeTabControl: Effect.Effect<TabControl, never, Scope.Scope> = Eff
               return new ActRefused({ reason: holder.until === null ? "waiting" : "person" });
             const fillAhead = queue.some((queued) => queued.kind === "fill");
             const firstBot = queue.find((queued) => queued.kind === "bot");
-            const ownTurn = firstBot === undefined || firstBot === waiter;
-            const free =
-              acting === null &&
-              !fillAhead &&
-              ownTurn &&
-              (holder === null || (holder.kind === "bot" && holder.botId === botId));
+            // The lease's bot goes on during it; the next turn is the queue's first.
+            const leased = holder?.kind === "bot" && holder.botId === botId;
+            const ownTurn = leased || firstBot === undefined || firstBot === waiter;
+            const free = acting === null && !fillAhead && ownTurn && (holder === null || leased);
             if (free) return "go";
             const blocker =
               acting ?? (holder?.kind === "bot" ? holder.botId : null) ?? firstBot?.botId ?? null;
@@ -369,9 +376,13 @@ export const makeTabControl: Effect.Effect<TabControl, never, Scope.Scope> = Eff
           ? Effect.void
           : Effect.fail(new FillRefused({ reason: closed ? "closed" : "person" })),
       );
+      const done = Deferred.makeUnsafe<void>();
+      filling = done;
       return yield* run(stillHeld).pipe(
         Effect.ensuring(
           Effect.suspend(() => {
+            if (filling === done) filling = null;
+            Deferred.doneUnsafe(done, Exit.void);
             if (holder?.kind === "fill") setHolder(null);
             return changed;
           }),
@@ -427,6 +438,7 @@ export const makeTabControl: Effect.Effect<TabControl, never, Scope.Scope> = Eff
       personInput,
       waitForMe,
       release,
+      afterFill: Effect.suspend(() => (filling === null ? Effect.void : Deferred.await(filling))),
       fill,
       withdraw,
       close,

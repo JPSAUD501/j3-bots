@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, it } from "@effect/vitest";
-import { BrowserHostError, BrowserHostRpcs, BrowserTabRef } from "@j3-bots/contracts";
+import {
+  BROWSER_DOWNLOAD_CHUNK_BYTES,
+  BrowserHostError,
+  BrowserHostRpcs,
+  BrowserTabRef,
+} from "@j3-bots/contracts";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as RpcTest from "effect/rpc/RpcTest";
@@ -94,6 +99,13 @@ it.effect(
           (yield* Effect.flip(host.takeDownload({ download }))).reason,
           "invalid-target",
         );
+        // A larger file crosses in pieces, each under a socket message's limit, and arrives whole.
+        const large = Uint8Array.from(
+          { length: 2 * BROWSER_DOWNLOAD_CHUNK_BYTES + 3 },
+          (_, index) => index % 251,
+        );
+        const report = yield* fake.download(TAB, "report.pdf", large);
+        assert.deepStrictEqual((yield* host.takeDownload({ download: report })).bytes, large);
       }),
     ),
 );

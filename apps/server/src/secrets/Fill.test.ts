@@ -84,11 +84,6 @@ const scene = (input: {
 }) =>
   Effect.gen(function* () {
     const bot = yield* createBot("Ana");
-    yield* (yield* Bots).update({
-      commandId: command(),
-      botId: bot.id,
-      changes: { browser: input.browserAccess ?? true },
-    });
     const session = yield* engineSession(bot.id);
     yield* (yield* Secrets).add({
       id: LOGIN_ID,
@@ -97,6 +92,14 @@ const scene = (input: {
       access: { _tag: "bots", botIds: (input.allowed ?? true) ? [bot.id] : [] },
     });
     const tab = yield* botOpens(bot.id, input.url);
+    // Turned off once its tab is open: its browser was on when it opened it.
+    if (input.browserAccess === false) {
+      yield* (yield* Bots).update({
+        commandId: command(),
+        botId: bot.id,
+        changes: { browser: false },
+      });
+    }
     const host = yield* (yield* TestServerBrowser).running;
     const focus = (field: BrowserFillField | "other") =>
       host.serve(input.url, { title: "Sign in", tree: "", focus: field });

@@ -1,10 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, it } from "@effect/vitest";
 import { type FakePageHost, makeFakePageHost } from "@j3-bots/browser/testing";
-import { type BotId, BrowserTabRef, DeviceId, type SharedBrowserTab } from "@j3-bots/contracts";
+import {
+  type BotId,
+  BrowserTabRef,
+  DeviceId,
+  MAX_ATTACHMENT_SIZE,
+  type SharedBrowserTab,
+} from "@j3-bots/contracts";
 import { BROWSER_NOTES } from "@j3-bots/prompts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -45,7 +53,9 @@ const desktop = (device: DeviceId) =>
 const attach = (host: FakePageHost) =>
   Effect.gen(function* () {
     const scope = yield* Scope.make();
-    yield* (yield* Browser).attachHost(host).pipe(Scope.provide(scope), Effect.orDie);
+    yield* (yield* Browser)
+      .attachHost(host, yield* host.hello.pipe(Effect.orDie))
+      .pipe(Scope.provide(scope));
     return scope;
   });
 
@@ -193,5 +203,125 @@ it.effect("ends a person's wait for me once the device that holds it is revoked"
 
     yield* (yield* DeviceAuth).revoke(phone);
     yield* tabsWhen((tabs) => tabs.some((tab) => tab.ref === ref && tab.heldBy === null));
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("keeps a private pop-up from the bot whose tab opened it", () =>
+  Effect.gen(function* () {
+    const browser = yield* Browser;
+    const bot = yield* createBot("Ana");
+    const { host } = yield* desktop(laptop);
+    const opener = yield* open(bot.id, "https://shop.example.test/");
+    const popup = BrowserTabRef.make("tab-private-popup");
+    const page = yield* host.open({ tab: popup, private: true, background: false });
+    yield* host.emit({ type: "tab.opened", page, opener, private: true });
+    yield* tabsWhen((tabs) => tabs.some((tab) => tab.ref === popup));
+    // A call without a tab still works on the bot's own tab, never the private one.
+    const read = yield* browser.tools.snapshot(bot.id, {}).pipe(Effect.orDie);
+    assert.strictEqual(read.tab, opener);
+    const shared = yield* tabsWhen((tabs) => tabs.some((tab) => tab.ref === popup));
+    assert.deepStrictEqual(shared.find((tab) => tab.ref === popup)?.onIt, []);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("acts on nothing a desktop's replaced connection still says", () =>
+  Effect.gen(function* () {
+    const bot = yield* createBot("Ana");
+    const { host: stale } = yield* desktop(laptop);
+    const ref = yield* open(bot.id, "https://shop.example.test/");
+    // The same app connects again before the old connection has ended.
+    const fresh = yield* makeFakePageHost({ host: { kind: "desktop", device: laptop } });
+    yield* fresh.open({ tab: ref, private: false, background: false });
+    yield* attach(fresh);
+
+    yield* stale.emit({ type: "tab.closed", tab: ref, crashed: false });
+    for (let turn = 0; turn < 50; turn++) yield* Effect.yieldNow;
+    const tabs = yield* tabsWhen((all) => all.some((tab) => tab.ref === ref));
+    assert.deepStrictEqual(
+      tabs.map((tab) => tab.where),
+      [{ kind: "desktop", device: laptop }],
+    );
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("gives a download to the bot whose action started it, not to one acting as it ends", () =>
+  Effect.gen(function* () {
+    const browser = yield* Browser;
+    const ana = yield* createBot("Ana");
+    const bea = yield* createBot("Bea");
+    const { host } = yield* desktop(laptop);
+    const ref = yield* open(ana.id, "https://files.example.test/");
+    // Too large to keep, so its bot is told without a workspace to keep it in.
+    const started = yield* host.startDownload(
+      ref,
+      "report.pdf",
+      new Uint8Array(MAX_ATTACHMENT_SIZE + 1),
+    );
+    yield* TestClock.adjust(BOT_LEASE);
+    yield* browser.tools.act(bea.id, ref, { action: "press", key: "Enter" }).pipe(Effect.orDie);
+    yield* started.finish;
+    while (!(yield* host.calls).some((call) => call.call === "download.take")) {
+      yield* Effect.yieldNow;
+    }
+
+    const tooLarge = BROWSER_NOTES.downloadTooLarge("report.pdf");
+    const anaRead = yield* browser.tools.snapshot(ana.id, { tab: ref }).pipe(Effect.orDie);
+    assert.include(anaRead.notice ?? "", tooLarge);
+    const beaRead = yield* browser.tools.snapshot(bea.id, { tab: ref }).pipe(Effect.orDie);
+    assert.notInclude(beaRead.notice ?? "", tooLarge);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("refuses a new tab once every tab of the server's browser is in use", () =>
+  Effect.gen(function* () {
+    const browser = yield* Browser;
+    const bot = yield* createBot("Ana");
+    const phone = yield* operatorDevice("Phone");
+    for (let n = 0; n < SERVER_TAB_CAP; n++) {
+      const ref = yield* open(bot.id, `https://page${n}.example.test/`);
+      const control = Option.getOrThrow(yield* browser.handsOf(ref)).control;
+      assert.isTrue(yield* control.waitForMe(phone));
+    }
+    const refused = yield* browser.tools
+      .open(bot.id, { url: "https://one-more.example.test/" })
+      .pipe(Effect.flip);
+    assert.strictEqual(refused.text, BROWSER_NOTES.serverFull);
+    const running = yield* (yield* TestServerBrowser).running;
+    assert.strictEqual((yield* running.tabs).length, SERVER_TAB_CAP);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("opens a parked tab once when two calls find it parked together", () =>
+  Effect.gen(function* () {
+    const browser = yield* Browser;
+    const ana = yield* createBot("Ana");
+    const bea = yield* createBot("Bea");
+    const { attached } = yield* desktop(laptop);
+    const ref = yield* open(ana.id, "https://news.example.test/");
+    yield* Scope.close(attached, Exit.void);
+    yield* TestClock.adjust(DESKTOP_GRACE);
+    yield* tabsWhen((tabs) => tabs.some((tab) => tab.ref === ref && tab.where.kind === "parked"));
+
+    // Another desktop, whose browser takes its time to open a tab.
+    const fake = yield* makeFakePageHost({
+      host: { kind: "desktop", device: DeviceId.make("device-desk") },
+    });
+    const gate = yield* Deferred.make<void>();
+    yield* attach({
+      ...fake,
+      open: (input) => Effect.andThen(Deferred.await(gate), fake.open(input)),
+    });
+    const reads = yield* Effect.forEach(
+      [ana, bea],
+      (bot) => browser.tools.snapshot(bot.id, { tab: ref }).pipe(Effect.orDie),
+      { concurrency: "unbounded" },
+    ).pipe(Effect.forkChild);
+    for (let turn = 0; turn < 50; turn++) yield* Effect.yieldNow;
+    yield* Deferred.succeed(gate, undefined);
+    yield* Fiber.join(reads);
+    const opens = (yield* fake.calls).filter(
+      (call) => call.call === "tab.open" && call.tab === ref,
+    );
+    assert.strictEqual(opens.length, 1);
   }).pipe(Effect.provide(TestDomain.layer)),
 );

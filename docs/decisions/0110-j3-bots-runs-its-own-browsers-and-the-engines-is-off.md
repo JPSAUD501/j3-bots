@@ -20,7 +20,7 @@ The owner wants a browser that is well made and works with real sites, for bots 
 ### Where a tab runs
 
 - **The desktop first.** A bot's new tab opens in the desktop app the person used last. Sites see a real browser on the person's own connection.
-- **The server as fallback.** With no desktop connected, the tab opens in the server's own browser, which keeps at most three tabs live: past that, the least used idle one is parked.
+- **The server as fallback.** With no desktop connected, the tab opens in the server's own browser, which keeps at most three tabs live: past that, the least used idle one is parked, and with none idle a new one is refused.
 - **A tab outlives its host.** A desktop that goes away has its tabs parked after a short grace, and a server tab unused and unwatched for a few minutes is parked too. A parked tab keeps its ref and its address, and opens again where tabs open now when a bot uses it; the bot is told the page was opened again.
 - **Local mode** uses the desktop app's browser only. It never starts one on the server.
 - Both hosts ship in 0.16.
@@ -63,7 +63,7 @@ The page hardening and the import of sign-ins follow in later work.
 
 ### What the engine keeps
 
-Provisioning sets the engine's `enableAgentBrowserAccess` to `false`, and the adapter removes the per-project access earlier releases turned on. Claude Code gets the engine's browser tools removed from its tool list; Codex, which takes no such list, still lists them, and the engine refuses every call. The adapter keeps one browser call, the deletion of the engine's old profile, for the sign-ins made there before 0.16. The rest of its browser code is gone: only `packages/engine-t3` ever knew it, and J3 Bots' browser knows nothing of T3 Code.
+Provisioning sets the engine's `enableAgentBrowserAccess` to `false`, whose default is on (**Read** at `bc0f04d`), and the adapter removes the per-project access earlier releases turned on. Claude Code gets the engine's browser tools removed from its tool list (**Verified**, 2026-11); Codex, which takes no such list, still lists them, and the engine refuses every call (**Read** at `bc0f04d`; a real-engine conformance case checks the refusal). The details are in [Engine: the bot's browser](../architecture/engine.md#the-bots-browser). The adapter keeps one browser call, the deletion of the engine's old profile, for the sign-ins made there before 0.16. The rest of its browser code is gone: only `packages/engine-t3` ever knew it, and J3 Bots' browser knows nothing of T3 Code.
 
 ## Consequences
 

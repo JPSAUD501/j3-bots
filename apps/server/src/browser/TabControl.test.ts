@@ -40,6 +40,31 @@ it.effect("runs one bot's action at a time, and lets another bot's wait for the 
   }).pipe(Effect.scoped),
 );
 
+it.effect("lets the bot that holds the lease go on while another bot waits for the tab", () =>
+  Effect.gen(function* () {
+    const control = yield* makeTabControl;
+    const order: Array<string> = [];
+    yield* control.act(
+      ana,
+      Effect.sync(() => order.push("ana")),
+    );
+    const waiting = yield* control
+      .act(
+        leo,
+        Effect.sync(() => order.push("leo")),
+      )
+      .pipe(Effect.forkChild);
+    yield* Effect.yieldNow;
+    yield* control.act(
+      ana,
+      Effect.sync(() => order.push("ana again")),
+    );
+    yield* TestClock.adjust(BOT_LEASE);
+    yield* Fiber.join(waiting);
+    assert.deepStrictEqual(order, ["ana", "ana again", "leo"]);
+  }).pipe(Effect.scoped),
+);
+
 it.effect(
   "fails a bot's action that waited for all of the queue's wait, naming the bot that held the tab",
   () =>
@@ -174,4 +199,24 @@ it.effect("fails a withdrawn bot's queued action and every action once the tab c
     yield* control.close;
     assert.strictEqual((yield* control.act(ana, Effect.void).pipe(Effect.flip)).reason, "closed");
   }).pipe(Effect.scoped),
+);
+
+it.effect(
+  "lets a person take the tab during a fill, and their input wait until its typing ends",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* makeTabControl;
+      const typing = yield* Deferred.make<void>();
+      const filling = yield* control.fill(() => Deferred.await(typing)).pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+      assert.isTrue(yield* control.personInput(phone));
+      const input = yield* control.afterFill.pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+      assert.isUndefined(input.pollUnsafe());
+      yield* Deferred.succeed(typing, undefined);
+      yield* Fiber.join(filling);
+      yield* Fiber.join(input);
+      // With no fill, input goes at once.
+      yield* control.afterFill;
+    }).pipe(Effect.scoped),
 );

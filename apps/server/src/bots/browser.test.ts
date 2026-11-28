@@ -122,5 +122,27 @@ it.effect("takes a bot off the tabs it is on once its browser is turned off", ()
     yield* onIt((on) => on.includes(bot.id));
     yield* bots.update({ commandId: command(), botId: bot.id, changes: { browser: false } });
     assert.deepStrictEqual(yield* onIt((on) => !on.includes(bot.id)), Option.some([]));
+    // A call that came in before the change touches no page after it.
+    const late = yield* browser.tools.snapshot(bot.id, { tab: ref }).pipe(Effect.flip);
+    assert.strictEqual(late.text, BROWSER_NOTES.off);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("opens one tab for a request the bridge forwards twice, and answers both alike", () =>
+  Effect.gen(function* () {
+    const tools = yield* BotTools;
+    const bot = yield* createBot("Ana");
+    const session = yield* engineSession(bot.id);
+    const request = {
+      requestId: "browser-forwarded",
+      sessionId: session,
+      tool: "browser_open",
+      arguments: { url: "https://shop.example.test/" },
+    };
+    const first = yield* tools.call(request);
+    const again = yield* tools.call(request);
+    assert.deepStrictEqual(again, first);
+    const host = yield* (yield* TestServerBrowser).running;
+    assert.strictEqual((yield* host.tabs).length, 1);
   }).pipe(Effect.provide(TestDomain.layer)),
 );

@@ -37,8 +37,12 @@ import {
   type ToolName,
   tools,
 } from "@j3-bots/prompts";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -74,6 +78,7 @@ import { isAnimated, isWhole } from "../themes/stillImage.ts";
 import { type Caller, Management, type ManagementRefused } from "./Management.ts";
 import type { ToolCallRequest, ToolCallResponse } from "./protocol.ts";
 import {
+  CallCutOff,
   RoomReadResult,
   type TurnToolCall,
   TurnToolRefused,
@@ -96,6 +101,23 @@ const encodeJson = <S extends Schema.Top>(schema: S) =>
   Schema.encodeEffect(Schema.toCodecJson(schema));
 
 const isJsonObject = Schema.is(Schema.JsonObject);
+
+/**
+ * The browser tools that change a page. The bridge forwards a request again
+ * when its connection fails, so each runs once for a request, and a forward
+ * of it gets that run's answer.
+ */
+const BROWSER_CHANGES: ReadonlySet<BrowserToolName> = new Set([
+  "browser_open",
+  "browser_navigate",
+  "browser_act",
+  "browser_evaluate",
+  "browser_dialog",
+  "browser_close",
+]);
+
+/** How long a browser call's answer is kept for a forward of its request: past the bridge's deadline. */
+const BROWSER_ANSWER_KEPT = Duration.minutes(5);
 
 /** A fill's outcome as the bot reads it: a status and fixed words, never a value. */
 const fillAnswer = (outcome: FillOutcome): Schema.Json =>
@@ -944,6 +966,45 @@ export const layer = Layer.effect(
     const isBrowserToolName = (name: string): name is BrowserToolName =>
       Object.hasOwn(browserHandlers, name);
 
+    /** The answers of browser calls that change a page, by session and request. */
+    interface BrowserAnswer {
+      readonly answer: Deferred.Deferred<Answered, Refused>;
+      settledAt: number | null;
+    }
+    const browserAnswers = new Map<string, BrowserAnswer>();
+
+    /** Runs `run` once for the request: a forward of it waits for, and gets, the same answer. */
+    const oncePerRequest = Effect.fnUntraced(function* (
+      tool: BrowserToolName,
+      call: Call,
+      run: Effect.Effect<Answered, Refused>,
+    ) {
+      const at = yield* Clock.currentTimeMillis;
+      for (const [key, entry] of browserAnswers)
+        if (
+          entry.settledAt !== null &&
+          at - entry.settledAt > Duration.toMillis(BROWSER_ANSWER_KEPT)
+        )
+          browserAnswers.delete(key);
+      const key = [call.sessionId, call.requestId, tool].join("\u0000");
+      const known = browserAnswers.get(key);
+      if (known !== undefined) return yield* Deferred.await(known.answer);
+      const entry: BrowserAnswer = { answer: Deferred.makeUnsafe(), settledAt: null };
+      browserAnswers.set(key, entry);
+      return yield* run.pipe(
+        Effect.onExit((exit) =>
+          Effect.gen(function* () {
+            entry.settledAt = yield* Clock.currentTimeMillis;
+            // A run cut short may or may not have changed the page.
+            const settled = Exit.hasInterrupts(exit)
+              ? Exit.fail(new Refused({ reason: new CallCutOff().message }))
+              : exit;
+            Deferred.doneUnsafe(entry.answer, settled);
+          }),
+        ),
+      );
+    });
+
     /**
      * A connector tool's call. Its arguments are checked before anything is
      * claimed, and the call is claimed for its turn before it is made, so it
@@ -983,7 +1044,10 @@ export const layer = Layer.effect(
       call: Call,
     ): Effect.Effect<ToolCallResponse, Refused | TurnToolRetry> => {
       if (isToolName(tool)) return handlers[tool](call);
-      if (isBrowserToolName(tool)) return browserHandlers[tool](call);
+      if (isBrowserToolName(tool)) {
+        const run = browserHandlers[tool](call);
+        return BROWSER_CHANGES.has(tool) ? oncePerRequest(tool, call, run) : run;
+      }
       if (isConnectorTool(tool)) {
         return connectorCall(tool, call).pipe(
           Effect.map(({ text, isError }) => ({ _tag: "text", text, isError })),
