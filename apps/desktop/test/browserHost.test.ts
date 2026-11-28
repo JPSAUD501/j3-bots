@@ -697,19 +697,38 @@ describe.skipIf(process.platform !== "linux" || process.env["DISPLAY"] === undef
           yield* press("down");
           yield* press("up");
           assert.strictEqual(yield* inPage("document.title"), "Pressed 2");
-          // The person sees the bot's pointer and its tag in the page: the check's main
-          // sends what the tab's view shows as its title asks.
+          // A picture for a bot leaves the pointer out, taken as the bot's click keeps its tag
+          // open (`clickAnswer`, then `tagLinger`).
+          yield* host.act({ tab: onScreen, action: { action: "click", locator: "#press" } });
+          const image = yield* host.screenshot({ tab: onScreen, format: "png" });
+          assert.deepStrictEqual(inkOf(Buffer.from(image.data, "base64")), { blue: 0, white: 0 });
+          // The pointer shows again after, once painted.
+          assert.isTrue(
+            (yield* host.evaluate({
+              tab: onScreen,
+              awaitPromise: true,
+              timeoutMs: 5_000,
+              expression: `new Promise((resolve) => {
+                const drawing = document.querySelector("j3-presence");
+                const painted = () =>
+                  requestAnimationFrame(() => requestAnimationFrame(() => resolve(true)));
+                if (getComputedStyle(drawing).opacity === "1") return painted();
+                const watch = new MutationObserver(() => {
+                  if (getComputedStyle(drawing).opacity !== "1") return;
+                  watch.disconnect();
+                  painted();
+                });
+                watch.observe(drawing, { attributes: true, attributeFilter: ["style"] });
+              })`,
+            })).value === true,
+          );
+          // The person sees the pointer, and its tag still open: so it was open as the bot's
+          // picture was taken, since nothing pointed since. The check's main sends what the
+          // tab's view shows as the page's title asks.
           yield* inPage(`document.title = "Look"`);
           const asShown = inkOf(yield* Deferred.await(pictured).pipe(Effect.timeout(STEP)));
           assert.isAbove(asShown.blue, 0);
           assert.isAbove(asShown.white, 0);
-          // A picture for a bot leaves the pointer out, and it shows again after.
-          const image = yield* host.screenshot({ tab: onScreen, format: "png" });
-          assert.deepStrictEqual(inkOf(Buffer.from(image.data, "base64")), { blue: 0, white: 0 });
-          assert.strictEqual(
-            yield* inPage(`getComputedStyle(document.querySelector("j3-presence")).opacity`),
-            "1",
-          );
           // A field the bot types in shows the bot's caret.
           yield* host.act({
             tab: onScreen,
