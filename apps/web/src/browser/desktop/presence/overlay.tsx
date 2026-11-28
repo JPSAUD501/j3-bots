@@ -32,6 +32,8 @@ const NOBODY: Drawn = { bots: [], held: false, hidden: false };
 const styleHost = (host: HTMLElement, hidden: boolean) => {
   for (const [name, value] of [
     ["all", "initial"],
+    // Not reset by `all`: a right-to-left page would mirror the tag.
+    ["direction", "ltr"],
     ["display", "block"],
     ["position", "fixed"],
     ["inset", "0"],
@@ -154,7 +156,8 @@ const source: CursorSource = {
   },
 };
 
-let viewport = { width: window.innerWidth, height: window.innerHeight };
+/** The stage's size: the viewport without its scrollbars, where a bot's point is measured. */
+let viewport: { readonly width: number; readonly height: number } | null = null;
 
 const subscribe = (change: () => void) => {
   changes.add(change);
@@ -191,7 +194,10 @@ const start = () => {
   shadow.adoptedStyleSheets = [presenceSheet()];
   const stage = document.createElement("div");
   // The client's type, which the host's reset leaves for the page's default.
-  stage.className = "absolute inset-0 overflow-hidden font-sans text-foreground antialiased";
+  stage.className = "absolute inset-0 overflow-hidden text-foreground antialiased";
+  // The system's own type, by generic names alone: a page's font faces apply in a
+  // shadow root, and could stand in for any family named here.
+  stage.style.setProperty("font-family", "ui-sans-serif, system-ui, sans-serif");
   shadow.append(stage);
   palette = stage;
   createRoot(stage).render(<Pointers />);
@@ -209,10 +215,12 @@ const start = () => {
     else if (top !== null && host.parentNode !== top) top.append(host);
   };
   watchFocus(document);
-  window.addEventListener("resize", () => {
-    viewport = { width: window.innerWidth, height: window.innerHeight };
+  new ResizeObserver(() => {
+    // Out of the page, the stage has no size: the pointers keep the last one.
+    if (stage.clientWidth === 0 || stage.clientHeight === 0) return;
+    viewport = { width: stage.clientWidth, height: stage.clientHeight };
     for (const change of changes) change();
-  });
+  }).observe(stage);
 
   const answer = (input: unknown): void => {
     const call = Schema.decodeUnknownOption(PresenceCall)(input);

@@ -20,7 +20,6 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Redacted from "effect/Redacted";
-import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -577,10 +576,7 @@ describe.skipIf(process.platform !== "linux" || process.env["DISPLAY"] === undef
               host.evaluate({ tab: onScreen, expression, awaitPromise: false }),
               ({ value }) => value,
             );
-          yield* inPage(`document.querySelector("j3-presence") !== null`).pipe(
-            Effect.repeat({ until: (drawn) => drawn === true, schedule: Schedule.spaced(100) }),
-            Effect.timeout(STEP),
-          );
+          yield* host.waitFor({ tab: onScreen, condition: { locator: "j3-presence" } });
           // The page sees only an element with no way in, over the whole of it, that no click lands on.
           assert.deepStrictEqual(
             yield* inPage(`(() => {

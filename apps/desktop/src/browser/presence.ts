@@ -2,9 +2,10 @@
 import { BrowserHostError } from "@j3-bots/contracts";
 import { PRESENCE_GLOBAL, PresenceCall, type PresenceBot } from "@j3-bots/desktop-bridge";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import type * as Scope from "effect/Scope";
+import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import type { WebContents } from "electron";
 
@@ -15,7 +16,11 @@ import type { WebContents } from "electron";
 
 /** The page's world is 0 and Electron's own is 999: the drawing's is apart from both. */
 const PRESENCE_WORLD = 1_710;
-/** How long a call to the drawing may take: a page held by a dialog runs no script until it is answered. */
+/**
+ * How long a call to the drawing may take. A page held by a dialog, or busy,
+ * runs no script: after one call it leaves unanswered this long, the tab's page
+ * is sent nothing until that call settles, and is then drawn again.
+ */
 const CALL_MS = 1_000;
 
 const encodeCall = Schema.encodeSync(PresenceCall);
@@ -60,11 +65,13 @@ const keyOf = (call: PresenceCall) => JSON.stringify(encodeCall(call));
 /**
  * The drawing of `contents`' page, from `script`, the drawing's bundle:
  * null where the app carries none, and then nothing is drawn. Nothing runs
- * in a page until a bot is on its tab while it shows.
+ * in a page until a bot is on its tab while it shows. What it waits on in the
+ * page lives in `scope`, the tab's.
  */
 export const makeTabDrawing = Effect.fn("makeTabDrawing")(function* (
   contents: WebContents,
   script: Effect.Effect<string | null>,
+  scope: Scope.Scope,
 ) {
   const turns = yield* Semaphore.make(1);
   let presence: Presence | null = null;
@@ -79,35 +86,60 @@ export const makeTabDrawing = Effect.fn("makeTabDrawing")(function* (
   let drawn: string | null = keyOf(NOTHING);
   const drawing = () => drawn !== null && drawn !== keyOf(NOTHING);
 
-  const run = (code: string) =>
-    Effect.tryPromise({
-      try: (): Promise<unknown> =>
-        contents.executeJavaScriptInIsolatedWorld(PRESENCE_WORLD, [{ code }]),
-      catch: (cause) =>
-        new BrowserHostError({ reason: "page", detail: String(cause).slice(0, 500) }),
-    });
+  /** Whether a call to the page is still unanswered: none is sent until it is. */
+  let unanswered = false;
+
+  /** What the page answered `code` with: none while it answers nothing. */
+  const run = Effect.fn("TabDrawing.run")(function* (code: string) {
+    if (unanswered || contents.isDestroyed()) return Option.none<unknown>();
+    const call = yield* Effect.forkIn(
+      Effect.tryPromise({
+        try: (): Promise<unknown> =>
+          contents.executeJavaScriptInIsolatedWorld(PRESENCE_WORLD, [{ code }]),
+        catch: (cause) =>
+          new BrowserHostError({ reason: "page", detail: String(cause).slice(0, 500) }),
+      }),
+      scope,
+    );
+    const answer = yield* Effect.timeoutOption(Fiber.join(call), CALL_MS);
+    if (Option.isNone(answer)) {
+      unanswered = true;
+      // The page draws again, as it should be by then, once it answers.
+      yield* Effect.forkIn(
+        Effect.andThen(
+          Fiber.await(call),
+          inTurn(() => {
+            unanswered = false;
+            drawn = null;
+          }),
+        ),
+        scope,
+      );
+    }
+    return answer;
+  });
+  const answered = (answer: Option.Option<unknown>) =>
+    Option.isSome(answer) && answer.value === true;
 
   /** Hands `call` to the page's drawing, running the drawing first where a bot is to be drawn. */
   const send = Effect.fn("TabDrawing.send")(
     function* (call: PresenceCall) {
-      if (contents.isDestroyed()) return false;
-      if ((yield* run(callScript(call))) === true) return true;
+      const first = yield* run(callScript(call));
+      if (answered(first)) return true;
+      if (Option.isNone(first)) return false;
       // A world with no drawing has nothing to take away.
       if (call._tag === "draw" && call.bots.length === 0) return true;
       const bundle = yield* script;
-      if (bundle === null) return false;
-      yield* run(bundle);
-      return (yield* run(callScript(call))) === true;
+      if (bundle === null || Option.isNone(yield* run(bundle))) return false;
+      return answered(yield* run(callScript(call)));
     },
-    Effect.timeoutOption(CALL_MS),
-    Effect.map(Option.getOrElse(() => false)),
     Effect.catch((cause) =>
       Effect.as(Effect.logDebug("A tab's page did not take the bots' pointers", cause), false),
     ),
   );
 
   /** Tells the page what it should draw now, if that changed. */
-  const sync = Effect.gen(function* () {
+  const sync: Effect.Effect<void> = Effect.gen(function* () {
     const wanted: PresenceCall =
       presence !== null && presence.bots.length > 0 && shown
         ? { _tag: "draw", bots: presence.bots, held: presence.held, hidden: capturing > 0 }
@@ -127,7 +159,7 @@ export const makeTabDrawing = Effect.fn("makeTabDrawing")(function* (
     }
   });
 
-  const inTurn = (change: () => void) =>
+  const inTurn = (change: () => void): Effect.Effect<void> =>
     turns.withPermits(1)(
       Effect.suspend(() => {
         change();
@@ -159,10 +191,16 @@ export const makeTabDrawing = Effect.fn("makeTabDrawing")(function* (
       inTurn(() => {
         capturing += 1;
       }),
+      // The capture is done: it waits on no page to draw again.
       () =>
-        inTurn(() => {
-          capturing -= 1;
-        }),
+        Effect.asVoid(
+          Effect.forkIn(
+            inTurn(() => {
+              capturing -= 1;
+            }),
+            scope,
+          ),
+        ),
     ),
     navigated: inTurn(() => {
       drawn = keyOf(NOTHING);

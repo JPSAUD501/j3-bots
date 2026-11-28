@@ -74,5 +74,7 @@ export function PagePresence({ bridge }: { readonly bridge: DesktopBrowserBridge
   useEffect(() => {
     bridge.presence(presence);
   }, [bridge, presence]);
+  // A client that stops telling, as on signing out, leaves no bot drawn.
+  useEffect(() => () => bridge.presence([]), [bridge]);
   return null;
 }

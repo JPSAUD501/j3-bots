@@ -695,7 +695,7 @@ export const makeDesktopBrowser = (options: {
           files,
           sent: new Set(),
           visited: new Set(),
-          drawing: yield* makeTabDrawing(contents, drawingScript),
+          drawing: yield* makeTabDrawing(contents, drawingScript, scope),
           ended: false,
         };
         current = entry;

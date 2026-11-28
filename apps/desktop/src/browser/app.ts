@@ -843,6 +843,10 @@ export const serveBrowser = (options: {
         runFork(browser.presence([]));
       }
     });
+    // Nor does a page that is gone.
+    options.main.webContents.on("render-process-gone", () => {
+      runFork(browser.presence([]));
+    });
 
     return browser;
   });
