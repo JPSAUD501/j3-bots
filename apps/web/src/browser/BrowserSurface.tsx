@@ -346,7 +346,7 @@ export function BrowserSurface({
         address={address}
         viewport={viewport}
         onIt={onIt}
-        faded={holding}
+        held={holding}
       />
       {usable && (
         <PageField

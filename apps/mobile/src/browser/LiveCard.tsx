@@ -160,7 +160,7 @@ function Picture({
           onIt={onIt}
           drawn={drawn}
           page={page}
-          faded={false}
+          held={false}
         />
       )}
     </View>

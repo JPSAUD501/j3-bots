@@ -1,31 +1,50 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { BrowserCursor } from "@j3-bots/client-runtime";
-import type { DrawnRect, PageSize } from "@j3-bots/client-runtime/presentation";
+import {
+  alongGlide,
+  type DrawnRect,
+  glideBend,
+  type GlideSide,
+  type PageSize,
+  pointerAside,
+  pointerThinks,
+  tagOpenFor,
+} from "@j3-bots/client-runtime/presentation";
 import type { Bot, BotId, BrowserTabRef } from "@j3-bots/contracts";
-import { glideCurve, glideFor, motion } from "@j3-bots/design-tokens";
-import { useEffect, useState } from "react";
+import {
+  easeOutCurve,
+  glideCurve,
+  glideFor,
+  motion,
+  pointer,
+  press,
+  reanimatedSpring,
+  springs,
+} from "@j3-bots/design-tokens";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { View } from "react-native";
 import Animated, {
+  cancelAnimation,
   Easing,
   FadeIn,
-  FadeOut,
+  interpolate,
   useAnimatedStyle,
   useSharedValue,
+  withRepeat,
+  withSequence,
+  withSpring,
   withTiming,
 } from "react-native-reanimated";
 import Svg, { Path } from "react-native-svg";
-import { BotAvatar } from "../components/avatar/BotAvatar.tsx";
+import { type AvatarHandle, BotAvatar } from "../components/avatar/BotAvatar.tsx";
 import { useBots } from "../presentation.tsx";
 import { Text } from "../text.tsx";
 import { useBotInk } from "../conversation/tint.ts";
 import { useReducedMotion } from "../motion.ts";
 
 const glideEase = Easing.bezier(...glideCurve);
-
-/** How long a still pointer keeps its name before only its face shows. */
-const NAME_FOR_MS = 2_000;
-/** How long the ring of a bot's click shows. */
-const CLICK_RING_MS = 450;
+const easeOut = Easing.bezier(...easeOutCurve);
+const pop = reanimatedSpring(springs.pop);
 
 /** Each bot's newest pointer on the tab, by bot. */
 export type Cursors = ReadonlyMap<BotId, BrowserCursor>;
@@ -45,13 +64,14 @@ export const withCursor = (
 };
 
 /**
- * Each bot's pointer over the page, in its own color, with a small label of
- * its face and name on the surface, so it reads in every theme, the way documents written by several hands show who is
- * where. The label shrinks to the face after two seconds still and comes
- * back as the pointer moves. While the person uses the page the pointers
- * step aside, faded. Only bots on the tab show. A pointer fades in where it
- * first points and glides to each next spot; one from another tab, or from
- * before the page went to `address`, waits to show again where it next points.
+ * Each bot's pointer over the page, the way documents written by several
+ * hands show who is where, drawn as the web draws it (`BotCursor.tsx`): a
+ * rounded arrow in the bot's color that never turns, and a tag with its face
+ * and name while it moves, clicks or answers the person. While the person
+ * holds the tab (`held`) the pointers step aside, faded, their tags open.
+ * Only bots on the tab show. A pointer fades in where it first points; one
+ * from another tab, or from before the page went to `address`, waits to show
+ * again where it next points.
  */
 export function BotCursors({
   cursors,
@@ -60,7 +80,7 @@ export function BotCursors({
   onIt,
   drawn,
   page,
-  faded,
+  held,
 }: {
   readonly cursors: Cursors;
   readonly tab: BrowserTabRef;
@@ -68,7 +88,7 @@ export function BotCursors({
   readonly onIt: ReadonlyArray<BotId>;
   readonly drawn: DrawnRect;
   readonly page: PageSize;
-  readonly faded: boolean;
+  readonly held: boolean;
 }) {
   const bots = useBots();
   // The pointers there were as the tab or its page last changed, which no longer say where the bots are.
@@ -78,6 +98,8 @@ export function BotCursors({
     stale: new Map(),
   });
   if (since.place !== place) setSince({ place, stale: cursors });
+  // The click each bot's pointer last answered, so a pointer that shows again does not answer it twice.
+  const [answered, setAnswered] = useState<ReadonlyMap<BotId, number>>(new Map());
   return (
     <View
       pointerEvents="none"
@@ -98,7 +120,17 @@ export function BotCursors({
           return [];
         }
         return [
-          <Pointer key={botId} bot={bot} cursor={cursor} page={page} drawn={drawn} faded={faded} />,
+          <Pointer
+            key={botId}
+            bot={bot}
+            cursor={cursor}
+            page={page}
+            drawn={drawn}
+            held={held}
+            thinking={!held && pointerThinks(bot.state)}
+            answered={answered.get(botId) ?? null}
+            onAnswered={(click) => setAnswered((now) => new Map(now).set(botId, click))}
+          />,
         ];
       })}
     </View>
@@ -110,103 +142,235 @@ function Pointer({
   cursor,
   page,
   drawn,
-  faded,
+  held,
+  thinking,
+  answered,
+  onAnswered,
 }: {
   readonly bot: Bot;
   readonly cursor: BrowserCursor;
   readonly page: PageSize;
   readonly drawn: DrawnRect;
-  readonly faded: boolean;
+  readonly held: boolean;
+  readonly thinking: boolean;
+  /** The sequence of the bot's click this pointer last answered, null before any. */
+  readonly answered: number | null;
+  readonly onAnswered: (click: number) => void;
 }) {
   const ink = useBotInk(bot.profile.avatar);
   const reduced = useReducedMotion();
-  // Where it points, as shares of the page, so zooming and panning the page move it at once.
-  const x = useSharedValue(cursor.x / page.width);
-  const y = useSharedValue(cursor.y / page.height);
-  useEffect(() => {
-    const toX = cursor.x / page.width;
-    const toY = cursor.y / page.height;
-    if (reduced) {
-      x.set(toX);
-      y.set(toY);
-      return;
-    }
-    // The move's length as a share of the page's diagonal sets how long it glides.
-    const share =
-      Math.hypot((toX - x.get()) * page.width, (toY - y.get()) * page.height) /
-      Math.hypot(page.width, page.height);
-    const glide = { duration: glideFor(share), easing: glideEase };
-    x.set(withTiming(toX, glide));
-    y.set(withTiming(toY, glide));
-  }, [cursor.x, cursor.y, page.width, page.height, reduced, x, y]);
-  const placed = useAnimatedStyle(() => ({
-    left: drawn.left + x.get() * drawn.width,
-    top: drawn.top + y.get() * drawn.height,
-  }));
-  // The name shows from each move until it has been still a while; a click rings where it landed.
+  const face = useRef<AvatarHandle>(null);
+  const at = { x: cursor.x / page.width, y: cursor.y / page.height };
+
+  // The tag shows from each move or click until a moment after the pointer stops.
   const [seen, setSeen] = useState(cursor.sequence);
-  // The move the name shows from, null once it has been still a while.
-  const [namedAt, setNamedAt] = useState<number | null>(cursor.sequence);
-  const named = namedAt !== null;
-  const [ring, setRing] = useState<number | null>(
-    cursor.action === "click" ? cursor.sequence : null,
-  );
+  const [tagged, setTagged] = useState(true);
   if (seen !== cursor.sequence) {
     setSeen(cursor.sequence);
-    if (cursor.action === "move") setNamedAt(cursor.sequence);
-    else setRing(cursor.sequence);
+    setTagged(true);
   }
-  useEffect(() => {
-    if (namedAt === null) return;
-    const timer = setTimeout(() => setNamedAt(null), NAME_FOR_MS);
+
+  // The glide, as shares of the page, so zooming and panning the page move it at once: from where
+  // it is, mid-glide too, on a gentle curve to where it points, each curve bending to the other side.
+  const fromX = useSharedValue(at.x);
+  const fromY = useSharedValue(at.y);
+  const bendX = useSharedValue(at.x);
+  const bendY = useSharedValue(at.y);
+  const toX = useSharedValue(at.x);
+  const toY = useSharedValue(at.y);
+  const along = useSharedValue(1);
+  const side = useRef<GlideSide>(1);
+  const squash = useSharedValue(1);
+  const ring = useSharedValue(1);
+  const moved = useEffectEvent((to: BrowserCursor) => {
+    const target = { x: to.x / page.width, y: to.y / page.height };
+    const here = alongGlide(
+      { x: fromX.get(), y: fromY.get() },
+      { x: bendX.get(), y: bendY.get() },
+      { x: toX.get(), y: toY.get() },
+      along.get(),
+    );
+    const start = { x: here.x * page.width, y: here.y * page.height };
+    const end = { x: to.x, y: to.y };
+    const length = Math.hypot(end.x - start.x, end.y - start.y);
+    const glide =
+      reduced || length === 0 ? 0 : glideFor(length / Math.hypot(page.width, page.height));
+    cancelAnimation(along);
+    if (glide === 0) {
+      fromX.set(target.x);
+      fromY.set(target.y);
+      bendX.set(target.x);
+      bendY.set(target.y);
+      along.set(1);
+    } else {
+      side.current = side.current === 1 ? -1 : 1;
+      const bend = glideBend(start, end, side.current);
+      fromX.set(here.x);
+      fromY.set(here.y);
+      bendX.set(bend.x / page.width);
+      bendY.set(bend.y / page.height);
+      along.set(0);
+      along.set(withTiming(1, { duration: glide, easing: glideEase }));
+    }
+    toX.set(target.x);
+    toY.set(target.y);
+    if (to.action === "click" && to.sequence !== answered) {
+      // The arrow goes down from its point and springs back, a ring spreads, the face smiles.
+      onAnswered(to.sequence);
+      face.current?.poke("smile");
+      ring.set(0);
+      ring.set(withTiming(1, { duration: pointer.ring, easing: easeOut }));
+      if (!reduced) {
+        squash.set(
+          withSequence(
+            withTiming(pointer.pressScale, { duration: press.duration, easing: easeOut }),
+            withSpring(1, pop),
+          ),
+        );
+      }
+    }
+    const timer = setTimeout(() => setTagged(false), tagOpenFor(to.action, glide));
     return () => clearTimeout(timer);
-  }, [namedAt]);
+  });
+  useEffect(() => moved(cursor), [cursor]);
+  const placed = useAnimatedStyle(() => {
+    const point = alongGlide(
+      { x: fromX.get(), y: fromY.get() },
+      { x: bendX.get(), y: bendY.get() },
+      { x: toX.get(), y: toY.get() },
+      along.get(),
+    );
+    return {
+      left: drawn.left + point.x * drawn.width,
+      top: drawn.top + point.y * drawn.height,
+    };
+  });
+
+  // Thinking before it acts: a small bob up and back.
+  const bob = useSharedValue(0);
   useEffect(() => {
-    if (ring === null) return;
-    const timer = setTimeout(() => setRing(null), CLICK_RING_MS);
+    if (!thinking || reduced) {
+      cancelAnimation(bob);
+      bob.set(0);
+      return;
+    }
+    const half = { duration: pointer.bobPeriod / 2, easing: Easing.inOut(Easing.ease) };
+    bob.set(withRepeat(withSequence(withTiming(-pointer.bob, half), withTiming(0, half)), -1));
+  }, [thinking, reduced, bob]);
+  const bobbing = useAnimatedStyle(() => ({ transform: [{ translateY: bob.get() }] }));
+  const pressed = useAnimatedStyle(() => ({
+    transformOrigin: [0, 0, 0],
+    transform: [{ scale: squash.get() }],
+  }));
+  const ringing = useAnimatedStyle(() => ({
+    opacity: 1 - ring.get(),
+    transform: [{ scale: reduced ? 1 : interpolate(ring.get(), [0, 1], [0.3, 1.6]) }],
+  }));
+
+  // The person takes the tab: it steps aside and fades, surprised a moment, then waiting until it is given back.
+  const [waits, setWaits] = useState(false);
+  if (!held && waits) setWaits(false);
+  useEffect(() => {
+    if (!held) return;
+    face.current?.poke("hover");
+    const timer = setTimeout(() => setWaits(true), pointer.surprise);
     return () => clearTimeout(timer);
-  }, [ring]);
+  }, [held]);
+  const aside = held ? pointerAside(at) : { x: 0, y: 0 };
+  const step = { duration: reduced ? 0 : motion.glide, easing: glideEase };
+  const stepped = useAnimatedStyle(() => ({
+    opacity: withTiming(held ? pointer.heldOpacity : 1, { duration: motion.state }),
+    transform: [
+      { translateX: withTiming(aside.x, step) },
+      { translateY: withTiming(aside.y, step) },
+    ],
+  }));
+
+  const open = tagged || held;
+  const tagStyle = useAnimatedStyle(() => ({
+    opacity: withTiming(open ? 1 : 0, { duration: motion.state }),
+    transformOrigin: [0, 0, 0],
+    transform: [{ scale: reduced ? 1 : withSpring(open ? 1 : pointer.tagFrom, pop) }],
+  }));
+
   return (
     <Animated.View
       entering={FadeIn.duration(motion.state)}
-      style={[{ position: "absolute", opacity: faded ? 0.35 : 1 }, placed]}
+      style={[{ position: "absolute" }, placed]}
     >
-      {ring !== null && (
-        <Animated.View
-          key={ring}
-          exiting={FadeOut.duration(CLICK_RING_MS)}
-          style={{
-            position: "absolute",
-            left: -12,
-            top: -12,
-            width: 24,
-            height: 24,
-            borderRadius: 12,
-            borderWidth: 2,
-            borderColor: ink,
-          }}
-        />
-      )}
-      <Svg width={14} height={18} viewBox="0 0 14 18">
-        <Path
-          d="M1 1 L1 15 L4.8 11.4 L7.4 17 L9.8 16 L7.3 10.4 L12.6 10.4 Z"
-          fill={ink}
-          stroke="white"
-          strokeWidth={1.2}
-          strokeLinejoin="round"
-        />
-      </Svg>
-      <View
-        className="absolute flex-row items-center gap-1 rounded-pill border bg-surface py-0.5 ps-0.5"
-        style={{ left: 12, top: 14, borderColor: ink, paddingEnd: named ? 8 : 2 }}
-      >
-        <BotAvatar avatar={bot.profile.avatar} seed={bot.id} state="idle" size={14} still />
-        {named && (
-          <Text numberOfLines={1} className="text-2xs font-semibold text-foreground">
-            {bot.profile.name}
-          </Text>
-        )}
-      </View>
+      <Animated.View style={stepped}>
+        <Animated.View style={bobbing}>
+          <Animated.View
+            style={[
+              {
+                position: "absolute",
+                left: -12,
+                top: -12,
+                width: 24,
+                height: 24,
+                borderRadius: 12,
+                borderWidth: 2,
+                borderColor: ink,
+              },
+              ringing,
+            ]}
+          />
+          <Animated.View style={pressed}>
+            <View
+              style={{
+                position: "absolute",
+                left: -pointer.tip.x,
+                top: -pointer.tip.y,
+                filter: pointer.arrowShadow,
+              }}
+            >
+              <Svg
+                width={pointer.box}
+                height={pointer.box}
+                viewBox={`0 0 ${pointer.box} ${pointer.box}`}
+              >
+                <Path
+                  d={pointer.arrow}
+                  fill={ink}
+                  stroke={pointer.light}
+                  strokeWidth={pointer.outline}
+                  strokeLinejoin="round"
+                />
+              </Svg>
+            </View>
+          </Animated.View>
+          <Animated.View
+            className="absolute flex-row items-center gap-1 rounded-pill ps-0.5 pe-2"
+            style={[
+              {
+                left: pointer.tagAt.x,
+                top: pointer.tagAt.y,
+                height: pointer.tagHeight,
+                backgroundColor: pointer.light,
+                borderWidth: pointer.tagEdge,
+                borderColor: ink,
+                boxShadow: pointer.tagShadow,
+              },
+              tagStyle,
+            ]}
+          >
+            <BotAvatar
+              ref={face}
+              avatar={bot.profile.avatar}
+              seed={bot.id}
+              state={held && waits ? "waiting" : "idle"}
+              size={pointer.face}
+            />
+            <Text
+              numberOfLines={1}
+              className="text-2xs font-semibold"
+              style={{ color: pointer.ink }}
+            >
+              {bot.profile.name}
+            </Text>
+          </Animated.View>
+        </Animated.View>
+      </Animated.View>
     </Animated.View>
   );
 }

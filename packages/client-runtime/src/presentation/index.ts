@@ -190,6 +190,14 @@ export {
   touchStarted,
 } from "./pageTouch.ts";
 export { claimsSwipe, swipeDirection } from "./sideSwipe.ts";
+export {
+  alongGlide,
+  glideBend,
+  type GlideSide,
+  pointerAside,
+  pointerThinks,
+  tagOpenFor,
+} from "./botPointer.ts";
 export { type OwnAppClient, ownAppClient, type OwnAppSetup, ownAppSetup } from "./connectorAsk.ts";
 export {
   applyConnectorChange,

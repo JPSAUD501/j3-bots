@@ -223,7 +223,7 @@ function Picture({ tab, live }: { readonly tab: ViewerTab; readonly live: boolea
             address={tab.url}
             viewport={page}
             onIt={tab.onIt}
-            faded={false}
+            held={false}
           />
         </span>
       )}
