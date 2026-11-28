@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type {
   BrowserFound,
+  BrowserInternalPage,
   BrowserPlace,
   BrowserStill,
   DesktopBrowserState,
@@ -39,9 +40,17 @@ export const tabsIn = (state: DesktopBrowserState, place: BrowserPlace) =>
 export const frontOf = (state: DesktopBrowserState, place: BrowserPlace) =>
   state.tabs.find((tab) => tab.ref === state.front[place]) ?? null;
 
-/** What a tab is called: its page's title, its site, or a new tab. */
-export const tabName = (tab: DesktopBrowserTab, newTab: string) =>
-  tab.title.trim() !== "" && tab.url !== "" ? tab.title : siteOf(tab.url) || newTab;
+/**
+ * What a tab is called: its page's title, its site, or a new tab. `named`
+ * names the app's own pages, and a new tab with `null`.
+ */
+export const tabName = (
+  tab: DesktopBrowserTab,
+  named: (page: BrowserInternalPage | null) => string,
+) => {
+  if (tab.internal !== null) return named(tab.internal);
+  return tab.title.trim() !== "" && tab.url !== "" ? tab.title : siteOf(tab.url) || named(null);
+};
 
 /** The letter that stands for a site where its icon would be. */
 export const siteLetter = (url: string, title: string) =>

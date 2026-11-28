@@ -7,6 +7,7 @@ import { type ReactNode, useLayoutEffect, useRef, useState } from "react";
 import { useI18n } from "../../app/context";
 import { MenuItem } from "../../components/ui/menu";
 import { cn } from "../../lib/cn";
+import { usePageNamer } from "./internal/InternalPage";
 import { tabName } from "./state";
 import { SiteTile } from "./SiteTile";
 
@@ -40,6 +41,7 @@ export function TabStrip({
   readonly onCover: (what: string, covers: boolean) => void;
 }) {
   const { t, plural } = useI18n();
+  const named = usePageNamer();
   const strip = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(Infinity);
   useLayoutEffect(() => {
@@ -90,9 +92,7 @@ export function TabStrip({
                     icon={<SiteTile url={tab.url} title={tab.title} />}
                   >
                     <span className="flex items-center gap-2">
-                      <span className="max-w-56 truncate">
-                        {tabName(tab, t("desktopBrowser.newTab"))}
-                      </span>
+                      <span className="max-w-56 truncate">{tabName(tab, named)}</span>
                       {faces?.(tab.ref)}
                     </span>
                   </MenuItem>
@@ -128,7 +128,7 @@ function Tab({
   readonly onClose: () => void;
 }) {
   const { t } = useI18n();
-  const name = tabName(tab, t("desktopBrowser.newTab"));
+  const name = tabName(tab, usePageNamer());
   return (
     <div
       className={cn(

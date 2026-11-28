@@ -203,6 +203,7 @@ export const serveBrowser = (options: {
         held: held.has(ref),
         place: at.place,
         failed: at.failed === null ? null : { url: at.failed.slice(0, 8192) },
+        internal: url === "" ? at.internal : null,
       };
     };
 

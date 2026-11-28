@@ -11,12 +11,14 @@ import { useI18n } from "../../app/context";
 import { Button } from "../../components/ui/button";
 import { useCovered } from "../../lib/covered";
 import type { DesktopBrowserBridge } from "../../live/desktop";
+import { InternalPage } from "./internal/InternalPage";
 import { SiteTile } from "./SiteTile";
 import { useStillOf } from "./state";
 
 // Where the tab in front is drawn. The page itself is the app's view, laid
 // over this area by the main process; the area tells it where it is. What
-// the app draws instead: a new tab's start, a page that failed to open, and
+// the app draws instead: a new tab's start, the app's own pages (the
+// bookmarks, the history), a page that failed to open, and
 // a still picture of the page while something of the window lies over it:
 // the browser's own menus and lists, which `covered` tells, or any of the
 // app's dialogs, which leave the area hidden from assistive technology.
@@ -86,7 +88,15 @@ export function PageArea({
     <div className="relative flex min-h-0 flex-1 flex-col bg-background">
       {strip}
       <div ref={setArea} className="relative min-h-0 flex-1">
-        {tab === null || tab.url === "" ? (
+        {tab !== null && tab.internal !== null ? (
+          <InternalPage
+            page={tab.internal}
+            bridge={bridge}
+            tab={tab}
+            place={place}
+            command={command}
+          />
+        ) : tab === null || tab.url === "" ? (
           <NewTab
             bridge={bridge}
             tab={tab}

@@ -126,6 +126,8 @@ export function DesktopBrowser({
         setOpen("history", true);
         onCover("history", true);
         return;
+      case "bookmarks":
+        return command({ _tag: "openPage", page: "bookmarks", place });
       default:
         break;
     }

@@ -27,6 +27,14 @@ export const BrowserLink = Schema.NullOr(
 );
 export type BrowserLink = typeof BrowserLink.Type;
 
+/**
+ * A page the app draws in a tab in place of a site's: the bookmarks, the
+ * history. It belongs to the tab's blank page, so going back to that page
+ * shows it again; the page the tab loads meanwhile stays the person's to see.
+ */
+export const BrowserInternalPage = Schema.Literals(["bookmarks", "history"]);
+export type BrowserInternalPage = typeof BrowserInternalPage.Type;
+
 /** A tab, as the app's windows draw it. */
 export const DesktopBrowserTab = Schema.Struct({
   ref: BrowserTabRef,
@@ -45,6 +53,8 @@ export const DesktopBrowserTab = Schema.Struct({
   place: BrowserPlace,
   /** The page failed to load: the site it was going to, for the page that says so. */
   failed: Schema.NullOr(Schema.Struct({ url: Address })),
+  /** The app's own page the tab shows, while it is on its blank page; `null` for a site or a new tab. */
+  internal: Schema.NullOr(BrowserInternalPage),
 });
 export type DesktopBrowserTab = typeof DesktopBrowserTab.Type;
 
@@ -101,6 +111,11 @@ export const DesktopBrowserCommand = Schema.Union([
   }),
   Schema.TaggedStruct("close", OnTab),
   Schema.TaggedStruct("reopen", { place: BrowserPlace }),
+  /**
+   * Shows one of the app's own pages in `place`: the tab there that already
+   * shows it, the new tab in front, or a new tab.
+   */
+  Schema.TaggedStruct("openPage", { page: BrowserInternalPage, place: BrowserPlace }),
   /** Puts the tab in front of `place`, moving it there if it was in the other. */
   Schema.TaggedStruct("show", { ...OnTab, place: BrowserPlace }),
   /** What the person typed in the address bar: an address, or words to search. */
@@ -185,6 +200,9 @@ export const BrowserShortcut = Schema.Literals([
   "print",
   "togglePlace",
   "botConversation",
+  "bookmark",
+  "bookmarksBar",
+  "bookmarks",
 ]);
 export type BrowserShortcut = typeof BrowserShortcut.Type;
 
@@ -266,6 +284,10 @@ export const browserShortcutOf = (
         return "togglePlace";
       case "k":
         return "botConversation";
+      case "b":
+        return "bookmarksBar";
+      case "o":
+        return "bookmarks";
       case "+":
         return "zoomIn";
       default:
@@ -294,6 +316,8 @@ export const browserShortcutOf = (
       return "zoomReset";
     case "j":
       return "downloads";
+    case "d":
+      return "bookmark";
     case "h":
       // ⌘H hides the app on a Mac; its history is ⌘Y.
       return options.mac ? null : "history";
