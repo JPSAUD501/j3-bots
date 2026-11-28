@@ -22,8 +22,9 @@ const GLIDE_STEPS = 16;
  *
  * It fades in where it first points and glides on a gentle curve to each next
  * spot, taking `glide` ms, each curve bending to the other side. Thinking
- * before it acts, it bobs. A click (`clicked`, the click's sequence) squashes
- * the arrow, rings where it landed and makes the face smile. While the person
+ * before it acts, it bobs. A click to answer (`clicked`, the click's
+ * sequence) squashes the arrow, rings where it landed and makes the face
+ * smile; `onAnswered` says so, for the click to be answered once. While the person
  * holds the tab (`held`) it steps aside and fades, its face surprised, then
  * waiting, with its tag open. Under reduced motion it moves at once, and
  * neither bobs nor squashes.
@@ -33,6 +34,7 @@ export function BotCursor({
   at,
   glide = motion.glide,
   clicked,
+  onAnswered,
   tagged,
   held = false,
   thinking = false,
@@ -41,6 +43,8 @@ export function BotCursor({
   readonly at: { readonly x: number; readonly y: number };
   readonly glide?: number;
   readonly clicked: number | null;
+  /** The click `clicked` was answered: the next time this pointer shows, it is not answered again. */
+  readonly onAnswered?: (clicked: number) => void;
   readonly tagged: boolean;
   readonly held?: boolean;
   readonly thinking?: boolean;
@@ -69,14 +73,14 @@ export function BotCursor({
     last.x = x;
     last.y = y;
     if (element == null || box == null || (from.x === x && from.y === y)) return;
-    const moving = last.run?.playState === "running";
+    // Where a glide under way has it now, read before it stops: after, it reads where it goes.
+    const midway =
+      last.run?.playState === "running" ? { x: element.offsetLeft, y: element.offsetTop } : null;
     last.run?.cancel();
     last.run = null;
     if (reduced || glide === 0 || box.clientWidth === 0 || box.clientHeight === 0) return;
     const size = { width: box.clientWidth, height: box.clientHeight };
-    const start = moving
-      ? { x: element.offsetLeft, y: element.offsetTop }
-      : { x: from.x * size.width, y: from.y * size.height };
+    const start = midway ?? { x: from.x * size.width, y: from.y * size.height };
     const end = { x: x * size.width, y: y * size.height };
     last.side = last.side === 1 ? -1 : 1;
     const bend = glideBend(start, end, last.side);
@@ -102,7 +106,8 @@ export function BotCursor({
   }, [thinking, reduced]);
 
   // A click: the arrow goes down from its point and springs back, a ring spreads, the face smiles.
-  const clickedAt = useEffectEvent(() => {
+  const clickedAt = useEffectEvent((click: number) => {
+    onAnswered?.(click);
     face.current?.poke("smile");
     ring.current?.animate(
       reduced
@@ -129,7 +134,7 @@ export function BotCursor({
     );
   });
   useEffect(() => {
-    if (clicked !== null) clickedAt();
+    if (clicked !== null) clickedAt(clicked);
   }, [clicked]);
 
   // The person takes the tab: surprised a moment, then waiting until it is given back.
@@ -202,7 +207,6 @@ export function BotCursor({
             seed={bot.id}
             state={held && waits ? "waiting" : "idle"}
             size={pointer.face}
-            still={!open}
           />
           {bot.profile.name}
         </span>

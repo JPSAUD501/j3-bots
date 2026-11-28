@@ -12,7 +12,7 @@ interface ShownCursor {
   readonly cursor: BrowserCursor;
   /** How long it glides to `cursor`, in ms: 0 where it first points. */
   readonly glide: number;
-  /** The sequence of its newest click, null before its first. */
+  /** The sequence of a click its pointer has yet to answer, null once answered. */
   readonly clicked: number | null;
   /** The tag shows from each move or click until a moment after the pointer stops. */
   readonly tagged: boolean;
@@ -61,11 +61,8 @@ export function BotCursors({
   const placeNow = useEffectEvent(() => place);
   useEffect(() => {
     const timers = new Map<BotId, number>();
-    // Each bot's last pointer and click, and the page they were on.
-    const last = new Map<
-      BotId,
-      { readonly place: string; readonly cursor: BrowserCursor; readonly clicked: number | null }
-    >();
+    // Each bot's last pointer, and the page it was on.
+    const last = new Map<BotId, { readonly place: string; readonly cursor: BrowserCursor }>();
     const stop = view.onCursor((cursor) => {
       const botId = whose(cursor);
       if (botId === null) return;
@@ -73,8 +70,8 @@ export function BotCursors({
       const before = last.get(botId);
       const same = before?.place === here ? before : undefined;
       const glide = glideTo(same?.cursor, cursor);
-      const clicked = cursor.action === "click" ? cursor.sequence : (same?.clicked ?? null);
-      last.set(botId, { place: here, cursor, clicked });
+      const clicked = cursor.action === "click" ? cursor.sequence : null;
+      last.set(botId, { place: here, cursor });
       setCursors((now) => new Map(now).set(botId, { cursor, glide, clicked, tagged: true }));
       window.clearTimeout(timers.get(botId));
       timers.set(
@@ -109,6 +106,14 @@ export function BotCursors({
         at={{ x: cursor.x / viewport.width, y: cursor.y / viewport.height }}
         glide={glide}
         clicked={clicked}
+        onAnswered={(answered) =>
+          setCursors((now) => {
+            const shown = now.get(botId);
+            return shown?.clicked === answered
+              ? new Map(now).set(botId, { ...shown, clicked: null })
+              : now;
+          })
+        }
         tagged={tagged}
         held={held}
         thinking={!held && pointerThinks(bot.state)}

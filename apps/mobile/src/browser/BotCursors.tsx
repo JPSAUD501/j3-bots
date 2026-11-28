@@ -98,6 +98,8 @@ export function BotCursors({
     stale: new Map(),
   });
   if (since.place !== place) setSince({ place, stale: cursors });
+  // The click each bot's pointer last answered, so a pointer that shows again does not answer it twice.
+  const [answered, setAnswered] = useState<ReadonlyMap<BotId, number>>(new Map());
   return (
     <View
       pointerEvents="none"
@@ -126,6 +128,8 @@ export function BotCursors({
             drawn={drawn}
             held={held}
             thinking={!held && pointerThinks(bot.state)}
+            answered={answered.get(botId) ?? null}
+            onAnswered={(click) => setAnswered((now) => new Map(now).set(botId, click))}
           />,
         ];
       })}
@@ -140,6 +144,8 @@ function Pointer({
   drawn,
   held,
   thinking,
+  answered,
+  onAnswered,
 }: {
   readonly bot: Bot;
   readonly cursor: BrowserCursor;
@@ -147,6 +153,9 @@ function Pointer({
   readonly drawn: DrawnRect;
   readonly held: boolean;
   readonly thinking: boolean;
+  /** The sequence of the bot's click this pointer last answered, null before any. */
+  readonly answered: number | null;
+  readonly onAnswered: (click: number) => void;
 }) {
   const ink = useBotInk(bot.profile.avatar);
   const reduced = useReducedMotion();
@@ -205,8 +214,9 @@ function Pointer({
     }
     toX.set(target.x);
     toY.set(target.y);
-    if (to.action === "click") {
+    if (to.action === "click" && to.sequence !== answered) {
       // The arrow goes down from its point and springs back, a ring spreads, the face smiles.
+      onAnswered(to.sequence);
       face.current?.poke("smile");
       ring.set(0);
       ring.set(withTiming(1, { duration: pointer.ring, easing: easeOut }));
@@ -350,7 +360,6 @@ function Pointer({
               seed={bot.id}
               state={held && waits ? "waiting" : "idle"}
               size={pointer.face}
-              still={!open}
             />
             <Text
               numberOfLines={1}
