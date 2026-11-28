@@ -51,7 +51,10 @@ const KEY_CHECK_TEXT = "j3-bots browser sign-ins";
 
 const decodeCookie = Schema.decodeUnknownOption(json(BrowserCookie));
 const encodeCookie = Schema.encodeEffect(json(BrowserCookie));
-const SealedOrigin = Schema.Struct({ storage: BrowserOriginStorage, indexedDb: Schema.Boolean });
+const SealedOrigin = Schema.Struct({
+  storage: BrowserOriginStorage,
+  tooBig: Schema.optionalKey(Schema.Literal(true)),
+});
 const decodeOrigin = Schema.decodeUnknownOption(json(SealedOrigin));
 const encodeOrigin = Schema.encodeEffect(json(SealedOrigin));
 const decodeSite = Schema.decodeUnknownOption(BrowserSite);

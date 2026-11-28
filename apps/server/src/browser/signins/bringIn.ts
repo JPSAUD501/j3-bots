@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { readProfileSignIns } from "@j3-bots/browser";
-import type { BrowserCookie, BrowserSite } from "@j3-bots/contracts";
+import type { BrowserCookie, BrowserOriginStorage, BrowserSite } from "@j3-bots/contracts";
 import { oldEngineBrowser, removeOldEngineBrowser } from "@j3-bots/engine-t3";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -10,7 +10,6 @@ import { ServerConfig } from "../../config.ts";
 import { HOME_ENTRIES } from "../../home/entries.ts";
 import { Layout } from "../../Layout.ts";
 import { siteOfOrigin } from "./canonical.ts";
-import type { JarOrigin } from "./merge.ts";
 import { SignIns } from "./SignIns.ts";
 
 // The one move of the sign-ins the bots made in the engine's browser, before
@@ -38,7 +37,7 @@ export const bringInOld = Effect.fn("SignIns.bringInOld")(function* (
   const old = yield* oldEngineBrowser(engineHome);
   if (state === "due") {
     const cookies: Array<BrowserCookie> = [];
-    const origins: Array<JarOrigin> = [];
+    const origins: Array<BrowserOriginStorage> = [];
     const sites: Array<BrowserSite> = [];
     if (old.profiles.length > 0) {
       if (Option.isNone(old.executable)) {

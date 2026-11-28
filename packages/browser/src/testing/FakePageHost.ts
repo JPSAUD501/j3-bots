@@ -101,6 +101,17 @@ export interface FakePageHost extends PageHost {
   /** The next sign-ins call named `call` (`cookies.write`, `storage.read`, …) fails, doing nothing. */
   readonly failNext: (call: string) => Effect.Effect<void>;
   /**
+   * While `held`, a page of `origin` holds its databases open: a write of
+   * them changes nothing of the origin and answers it `waiting`, as a host
+   * does for a version change it would have to wait for.
+   */
+  readonly holdDatabases: (origin: string, held: boolean) => Effect.Effect<void>;
+  /**
+   * From now on `origin`'s databases hold a value a read cannot carry: the
+   * host gives the origin without them.
+   */
+  readonly databasesUnreadable: (origin: string) => Effect.Effect<void>;
+  /**
    * The next sign-ins call named `call` waits, before it does anything,
    * until the effect this gives runs.
    */
@@ -183,6 +194,8 @@ export const makeFakePageHost = (
     let runs = 1;
     const browserRun = () => `fake-browser-run-${runs}`;
     const failing = new Set<string>();
+    const heldDatabases = new Set<string>();
+    const unreadableDatabases = new Set<string>();
     const holding = new Map<string, Deferred.Deferred<void>>();
     const capabilities = options.capabilities ?? {
       screencast: true,
@@ -521,9 +534,10 @@ export const makeFakePageHost = (
               origins: input.origins.flatMap((origin) => {
                 const kept = storage.get(origin);
                 if (kept === undefined) return [];
-                if (input.indexedDb) return [kept];
-                const { indexedDb: _indexedDb, ...rest } = kept;
-                return [rest];
+                const { indexedDb: databases, ...rest } = kept;
+                return input.indexedDb && !unreadableDatabases.has(origin)
+                  ? [{ ...rest, indexedDb: databases ?? [] }]
+                  : [rest];
               }),
             })),
           ),
@@ -532,7 +546,12 @@ export const makeFakePageHost = (
         signInCall("storage.write").pipe(
           Effect.andThen(
             Effect.sync(() => {
+              const waiting: Array<string> = [];
               for (const origin of origins) {
+                if (origin.indexedDb !== undefined && heldDatabases.has(origin.origin)) {
+                  waiting.push(origin.origin);
+                  continue;
+                }
                 const kept = storage.get(origin.origin);
                 storage.set(origin.origin, {
                   ...origin,
@@ -541,6 +560,7 @@ export const makeFakePageHost = (
                     : {}),
                 });
               }
+              return waiting.length === 0 ? {} : { waiting };
             }),
           ),
         ),
@@ -596,6 +616,12 @@ export const makeFakePageHost = (
           storage.clear();
           cookieStore = next;
         }),
+      holdDatabases: (origin, held) =>
+        Effect.sync(() => {
+          if (held) heldDatabases.add(origin);
+          else heldDatabases.delete(origin);
+        }),
+      databasesUnreadable: (origin) => Effect.sync(() => unreadableDatabases.add(origin)),
       failNext: (call) =>
         Effect.sync(() => {
           failing.add(call);

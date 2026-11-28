@@ -54,6 +54,7 @@ import {
   type StoreBaseline,
 } from "./JarFile.ts";
 import {
+  databaseBytes,
   diffHostCookies,
   hasCookieChanges,
   type JarCookieChanges,
@@ -100,6 +101,17 @@ const RETRY_MS = [5_000, 30_000, 120_000, 600_000] as const;
 /** The longest wait for the next cookie to expire before the list is drawn again. */
 const EXPIRY_CHECK_MS = 24 * 60 * 60 * 1000;
 
+/** How much of sites' IndexedDB the jar carries between browsers, encoded. */
+export interface DatabaseLimits {
+  /** The most one origin's databases may take. */
+  readonly origin: number;
+  /** The most every origin's databases may take together. */
+  readonly total: number;
+}
+
+const MIB = 1024 * 1024;
+export const DATABASE_LIMITS: DatabaseLimits = { origin: 5 * MIB, total: 64 * MIB };
+
 /** What the sync of one attached host takes from its owner. */
 export interface SignInsAttachment {
   /** An event the host sent, as it came, private tabs' included. */
@@ -143,7 +155,8 @@ export class SignIns extends Context.Service<
      */
     readonly bringIn: (input: {
       readonly cookies: ReadonlyArray<BrowserCookie>;
-      readonly origins: ReadonlyArray<JarOrigin>;
+      /** Each origin's storage, with every database it kept. */
+      readonly origins: ReadonlyArray<BrowserOriginStorage>;
       /** The sites the old browser showed as pages. */
       readonly sites: ReadonlyArray<BrowserSite>;
     }) => Effect.Effect<void>;
@@ -200,6 +213,11 @@ interface Attached {
   agreed: boolean;
   /** Origins whose storage is still to be reconciled. */
   readonly pending: Set<Digest>;
+  /**
+   * Origins it wrote nothing of, as a page of them may hold their databases
+   * open, and how often in a row: each is tried again on its own.
+   */
+  readonly waiting: Map<Digest, { tries: number; retrying: boolean }>;
   /** Its tabs, and whether each is private: only shared tabs' pages are read. */
   readonly tabs: Map<BrowserTabRef, { url: string; readonly private: boolean }>;
   /** Origins a tab left or closed on: a host without change events reads them once more. */
@@ -244,7 +262,9 @@ const forOthers = (contents: MutableContents, changes: JarCookieChanges): Browse
 const sameView = (a: BrowserSignIns, b: BrowserSignIns) =>
   a.status === b.status &&
   a.sites.length === b.sites.length &&
-  a.sites.every(({ site }, at) => b.sites[at]?.site === site);
+  a.sites.every(
+    ({ site, tooBig }, at) => b.sites[at]?.site === site && b.sites[at]?.tooBig === tooBig,
+  );
 
 /** The sites a reported change to cookies touches. */
 const sitesOfChanges = (changes: BrowserCookieChanges): ReadonlyArray<BrowserSite> => [
@@ -252,14 +272,13 @@ const sitesOfChanges = (changes: BrowserCookieChanges): ReadonlyArray<BrowserSit
   ...changes.removed.map((key) => siteOfHost(key.domain)),
 ];
 
-/** An origin emptied, as the jar keeps it after a sign-out. */
-const emptied = (origin: JarOrigin): JarOrigin => {
-  const empty = emptyStorage(origin.storage.origin);
-  return {
-    indexedDb: origin.indexedDb,
-    storage: origin.indexedDb ? { ...empty, indexedDb: [] } : empty,
-  };
-};
+/**
+ * An origin emptied, as the jar keeps it after a sign-out, which deletes
+ * its databases on every host too: none, and none too big.
+ */
+const emptied = (origin: JarOrigin): JarOrigin => ({
+  storage: { ...emptyStorage(origin.storage.origin), indexedDb: [] },
+});
 
 /**
  * The sign-ins over `opened`, the jar as it opened under the key `digests`
@@ -268,6 +287,7 @@ const emptied = (origin: JarOrigin): JarOrigin => {
  */
 export const makeSignIns = Effect.fn("SignIns.make")(function* (
   opened: { readonly jar: OpenedJar; readonly digests: Digests } | undefined,
+  limits: DatabaseLimits = DATABASE_LIMITS,
 ) {
   const scope = yield* Effect.scope;
   let jar: Jar =
@@ -292,6 +312,26 @@ export const makeSignIns = Effect.fn("SignIns.make")(function* (
   /** The jar when it is open, for a change; a change on a jar that is not does nothing. */
   const openJar = (): Open | undefined => (jar._tag === "open" ? jar : undefined);
 
+  /** What each origin's databases take in the jar, and all of them together. */
+  const databaseSizes = new Map<Digest, number>();
+  let databaseTotal = 0;
+  const countDatabases = (id: Digest, origin: JarOrigin) => {
+    const bytes = databaseBytes(origin.storage.indexedDb);
+    databaseTotal += bytes - (databaseSizes.get(id) ?? 0);
+    if (bytes === 0) databaseSizes.delete(id);
+    else databaseSizes.set(id, bytes);
+  };
+  const countAll = () => {
+    databaseSizes.clear();
+    databaseTotal = 0;
+    if (jar._tag === "open")
+      for (const [id, origin] of jar.contents.origins) countDatabases(id, origin);
+  };
+  countAll();
+  /** How many bytes origin `id`'s databases may take, besides every other origin's. */
+  const roomFor = (id: Digest) =>
+    Math.min(limits.origin, limits.total - (databaseTotal - (databaseSizes.get(id) ?? 0)));
+
   /** The sites that hold something, and the earliest a cookie of them expires. */
   const viewOf = (now: number): { view: BrowserSignIns; expires: number | undefined } => {
     if (jar._tag === "keyless")
@@ -299,6 +339,7 @@ export const makeSignIns = Effect.fn("SignIns.make")(function* (
     if (jar._tag === "unreadable")
       return { view: { status: "unreadable", sites: [] }, expires: undefined };
     const holding = new Set<BrowserSite>();
+    const tooBig = new Set<BrowserSite>();
     let expires: number | undefined;
     for (const cookie of jar.contents.cookies.values()) {
       if (expiredAt(cookie, now)) continue;
@@ -306,12 +347,21 @@ export const makeSignIns = Effect.fn("SignIns.make")(function* (
       if (cookie.expires !== undefined)
         expires = Math.min(expires ?? Number.POSITIVE_INFINITY, cookie.expires * 1000);
     }
-    for (const { storage } of jar.contents.origins.values()) {
-      const site = siteOfOrigin(storage.origin);
-      if (site !== undefined && !isEmptyStorage(storage)) holding.add(site);
+    for (const origin of jar.contents.origins.values()) {
+      const site = siteOfOrigin(origin.storage.origin);
+      if (site === undefined) continue;
+      // An origin too big to carry still holds a sign-in, in each browser.
+      if (origin.tooBig === true) tooBig.add(site);
+      if (origin.tooBig === true || !isEmptyStorage(origin.storage)) holding.add(site);
     }
     const sites = [...jar.contents.sites.values()].filter((site) => holding.has(site)).sort();
-    return { view: { status: "ready", sites: sites.map((site) => ({ site })) }, expires };
+    return {
+      view: {
+        status: "ready",
+        sites: sites.map((site) => (tooBig.has(site) ? { site, tooBig: true } : { site })),
+      },
+      expires,
+    };
   };
   const first = viewOf(yield* Clock.currentTimeMillis);
   const view = yield* SubscriptionRef.make(first.view);
@@ -429,7 +479,10 @@ export const makeSignIns = Effect.fn("SignIns.make")(function* (
           contents.cookies.delete(id);
           contents.tombstones.set(id, digest);
         }
-        for (const [id, origin] of input.origins ?? []) contents.origins.set(id, origin);
+        for (const [id, origin] of input.origins ?? []) {
+          contents.origins.set(id, origin);
+          countDatabases(id, origin);
+        }
         for (const [id, at] of input.signouts ?? []) contents.signouts.set(id, at);
         if (input.sites?.removed === "all") contents.sites.clear();
         else for (const id of input.sites?.removed ?? []) contents.sites.delete(id);
@@ -468,10 +521,51 @@ export const makeSignIns = Effect.fn("SignIns.make")(function* (
       { discard: true },
     );
 
-  /** The storage `origin` gives host `a`, as it reads it, and whether databases are in it. */
-  const hostView = (a: Attached, origin: JarOrigin) => {
-    const indexedDb = a.indexedDb && origin.indexedDb;
-    return { indexedDb, storage: storageView(origin.storage, indexedDb) };
+  /** The storage `origin` gives host `a`, as it reads it: its databases when both keep them. */
+  const hostView = (a: Attached, origin: JarOrigin) => ({
+    storage: storageView(origin.storage, a.indexedDb && origin.storage.indexedDb !== undefined),
+  });
+
+  /**
+   * Origins host `a` wrote nothing of, as a page of them may hold their
+   * databases open: each stays pending, and is reconciled again on its own
+   * after a wait that grows with its tries, while the rest of the host syncs
+   * on.
+   */
+  const waitOn = (a: Attached, ids: ReadonlyArray<Digest>): Effect.Effect<void> =>
+    Effect.forEach(
+      ids,
+      (id) =>
+        Effect.suspend(() => {
+          a.pending.add(id);
+          a.agreed = false;
+          const waiting = a.waiting.get(id) ?? { tries: 0, retrying: false };
+          a.waiting.set(id, waiting);
+          waiting.tries += 1;
+          if (waiting.retrying) return Effect.void;
+          waiting.retrying = true;
+          const wait = RETRY_MS[Math.min(waiting.tries, RETRY_MS.length) - 1] ?? RETRY_MS[0];
+          return Effect.forkIn(
+            Effect.sleep(wait).pipe(
+              Effect.andThen(
+                run(
+                  Effect.suspend(() => {
+                    waiting.retrying = false;
+                    return attached.has(a) ? syncOrigin(a, id) : Effect.void;
+                  }),
+                ),
+              ),
+            ),
+            a.scope,
+          ).pipe(Effect.asVoid);
+        }),
+      { discard: true },
+    );
+
+  /** Origin `id` is written to host `a`, or needs no write: it waits no more. */
+  const settled = (a: Attached, id: Digest) => {
+    a.pending.delete(id);
+    a.waiting.delete(id);
   };
 
   /** Gives every attached host but `from` origins the jar took. */
@@ -491,11 +585,17 @@ export const makeSignIns = Effect.fn("SignIns.make")(function* (
             a.host.writeStorage(views.map(([, storage]) => storage)),
           );
           if (Option.isNone(written)) return yield* broke(a);
+          const waiting = new Set(written.value.waiting ?? []);
           for (const [id, storage] of views) {
-            a.pending.delete(id);
+            if (waiting.has(storage.origin)) continue;
+            settled(a, id);
             a.baseline.origins.set(id, open.digests.storageDigest(storage));
           }
           yield* saveBaseline(open, a);
+          yield* waitOn(
+            a,
+            views.filter(([, storage]) => waiting.has(storage.origin)).map(([id]) => id),
+          );
         }),
       { discard: true },
     );
@@ -547,7 +647,7 @@ export const makeSignIns = Effect.fn("SignIns.make")(function* (
         const kept = open.contents.origins.get(id);
         if (kept === undefined) a.baseline?.origins.delete(id);
         else a.baseline?.origins.set(id, digests.storageDigest(hostView(a, kept).storage));
-        a.pending.delete(id);
+        settled(a, id);
       }
     }
     return true;
@@ -611,6 +711,7 @@ export const makeSignIns = Effect.fn("SignIns.make")(function* (
     a.signedOut = -1;
     a.agreed = false;
     a.pending.clear();
+    a.waiting.clear();
     // A store the jar does not know, after the person signed out of all
     // sites lately: what it holds is from before, and goes first.
     if (
@@ -679,39 +780,47 @@ export const makeSignIns = Effect.fn("SignIns.make")(function* (
   const settle = Effect.fn("SignIns.settle")(function* (
     open: Open,
     a: Attached,
-    reads: ReadonlyArray<{ readonly read: BrowserOriginStorage; readonly indexedDb: boolean }>,
+    reads: ReadonlyArray<BrowserOriginStorage>,
   ) {
     const { contents, digests } = open;
     if (a.baseline === undefined) return;
     const taken: Array<readonly [Digest, JarOrigin]> = [];
     const given: Array<BrowserOriginStorage> = [];
     const next = new Map<Digest, Digest>();
-    for (const { read, indexedDb } of reads) {
+    for (const read of reads) {
       const id = digests.originId(read.origin);
       const known = a.baseline.origins.get(id);
       const site = siteOfOrigin(read.origin);
       const plan = reconcileOrigin({
         kept: contents.origins.get(id),
         read,
-        indexedDb,
+        room: roomFor(id),
         baseline: known === UNKNOWN ? "none" : known,
         revoked: site !== undefined && revokedSince(open, a.since, [site]),
         digests,
       });
-      if (plan.jar !== undefined) taken.push([id, plan.jar]);
+      if (plan.jar !== undefined) {
+        taken.push([id, plan.jar]);
+        // Counted now, so the next origin of the batch has the room left.
+        countDatabases(id, plan.jar);
+      }
       if (plan.host !== undefined) given.push(plan.host);
       next.set(id, plan.baseline);
     }
     yield* change(open, { origins: taken });
+    let waiting = new Set<Digest>();
     if (given.length > 0) {
       const written = yield* hostCall("take site storage", a.host.writeStorage(given));
       if (Option.isNone(written)) return yield* broke(a);
+      waiting = new Set((written.value.waiting ?? []).map((origin) => digests.originId(origin)));
     }
     for (const [id, digest] of next) {
+      if (waiting.has(id)) continue;
       a.baseline.origins.set(id, digest);
-      a.pending.delete(id);
+      settled(a, id);
     }
     yield* saveBaseline(open, a);
+    yield* waitOn(a, [...waiting]);
     yield* pushOrigins(open, a, taken);
     yield* agree(open, a);
   });
@@ -723,9 +832,10 @@ export const makeSignIns = Effect.fn("SignIns.make")(function* (
     origins: ReadonlyArray<string>,
   ) {
     const { contents, digests } = open;
+    // Every origin's databases, but those too big to carry.
     const keepsDatabases = (origin: string) =>
-      a.indexedDb && contents.origins.get(digests.originId(origin))?.indexedDb === true;
-    const reads: Array<{ read: BrowserOriginStorage; indexedDb: boolean }> = [];
+      a.indexedDb && contents.origins.get(digests.originId(origin))?.tooBig !== true;
+    const reads: Array<BrowserOriginStorage> = [];
     for (const indexedDb of [false, true]) {
       const batch = origins.filter((origin) => keepsDatabases(origin) === indexedDb);
       if (batch.length === 0) continue;
@@ -739,7 +849,7 @@ export const makeSignIns = Effect.fn("SignIns.make")(function* (
         // Databases asked for and not read hold what the host could not give:
         // the origin is left as it is, on both sides, until it can be read.
         if (indexedDb && held !== undefined && held.indexedDb === undefined) continue;
-        reads.push({ indexedDb, read: held ?? storageView(emptyStorage(origin), indexedDb) });
+        reads.push(held ?? storageView(emptyStorage(origin), indexedDb));
       }
     }
     return Option.some(reads);
@@ -953,6 +1063,7 @@ export const makeSignIns = Effect.fn("SignIns.make")(function* (
       signedOut: -1,
       agreed: false,
       pending: new Set(),
+      waiting: new Map(),
       tabs: new Map<BrowserTabRef, { url: string; readonly private: boolean }>([
         ...hello.tabs.map((page) => [page.tab, { url: page.url, private: false }] as const),
         ...(hello.privateTabs ?? []).map(
@@ -1082,6 +1193,7 @@ export const makeSignIns = Effect.fn("SignIns.make")(function* (
         digests: jar.digests,
         contents: { ...fresh.contents },
       };
+      countAll();
       // Recorded as a sign-out of all sites: the engine's old profile, still
       // due to move, brings nothing of before back.
       yield* signOutOf(ALL_SITES);
@@ -1099,7 +1211,7 @@ export const makeSignIns = Effect.fn("SignIns.make")(function* (
 
   const bringIn = (input: {
     readonly cookies: ReadonlyArray<BrowserCookie>;
-    readonly origins: ReadonlyArray<JarOrigin>;
+    readonly origins: ReadonlyArray<BrowserOriginStorage>;
     readonly sites: ReadonlyArray<BrowserSite>;
   }) =>
     run(
@@ -1118,13 +1230,20 @@ export const makeSignIns = Effect.fn("SignIns.make")(function* (
           digests,
         });
         const origins: Array<readonly [Digest, JarOrigin]> = [];
-        for (const origin of input.origins) {
-          const site = siteOfOrigin(origin.storage.origin);
-          if (site === undefined || isEmptyStorage(origin.storage) || everSignedOut(open, [site]))
+        for (const storage of input.origins) {
+          const site = siteOfOrigin(storage.origin);
+          if (site === undefined || isEmptyStorage(storage) || everSignedOut(open, [site]))
             continue;
-          const id = digests.originId(origin.storage.origin);
+          const id = digests.originId(storage.origin);
           const kept = contents.origins.get(id);
-          if (kept === undefined || isEmptyStorage(kept.storage)) origins.push([id, origin]);
+          if (kept !== undefined && !isEmptyStorage(kept.storage)) continue;
+          // Databases are carried as any host's are: within the room left.
+          const origin: JarOrigin =
+            databaseBytes(storage.indexedDb) > roomFor(id)
+              ? { storage: storageView(storage, false), tooBig: true }
+              : { storage };
+          countDatabases(id, origin);
+          origins.push([id, origin]);
         }
         const sites = [...new Set(input.sites)]
           .filter((site) => !everSignedOut(open, [site]))

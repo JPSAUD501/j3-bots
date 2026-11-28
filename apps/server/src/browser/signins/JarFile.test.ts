@@ -71,10 +71,7 @@ it.layer(NodeServices.layer)("the sign-ins' file", (it) => {
                 origins: [
                   [
                     digests.originId(origin),
-                    {
-                      indexedDb: false,
-                      storage: { origin, localStorage: [{ name: "token", value: TOKEN }] },
-                    },
+                    { storage: { origin, localStorage: [{ name: "token", value: TOKEN }] } },
                   ],
                 ],
                 signouts: [[digests.siteId("other.test"), 1]],

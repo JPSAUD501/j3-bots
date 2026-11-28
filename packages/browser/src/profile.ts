@@ -34,15 +34,10 @@ import { logKeys, tableKeys } from "./leveldb.ts";
 //   every request it makes answered by an empty page here, and the network
 //   off underneath: a proxy nothing answers at, and no name resolves.
 
-/** One origin's storage read from a profile, and whether it held databases. */
-export interface ProfileOrigin {
-  readonly storage: BrowserOriginStorage;
-  readonly indexedDb: boolean;
-}
-
 export interface ProfileSignIns {
   readonly cookies: ReadonlyArray<BrowserCookie>;
-  readonly origins: ReadonlyArray<ProfileOrigin>;
+  /** Each origin's storage, with every database it kept: none is `[]`. */
+  readonly origins: ReadonlyArray<BrowserOriginStorage>;
   /**
    * The origins the profile showed as pages, as its history or its sites'
    * own storage say: not its cookies' domains, which pages of other sites set.
@@ -323,19 +318,10 @@ export const readProfileSignIns = Effect.fn("profile.read")(
     );
     return {
       cookies,
-      origins: state.origins.flatMap((origin): ReadonlyArray<ProfileOrigin> => {
+      origins: state.origins.flatMap((origin): ReadonlyArray<BrowserOriginStorage> => {
         const databases = origin.indexedDB ?? [];
         if (origin.localStorage.length === 0 && databases.length === 0) return [];
-        return [
-          {
-            indexedDb: databases.length > 0,
-            storage: {
-              origin: origin.origin,
-              localStorage: origin.localStorage,
-              ...(databases.length > 0 ? { indexedDb: databases } : {}),
-            },
-          },
-        ];
+        return [{ origin: origin.origin, localStorage: origin.localStorage, indexedDb: databases }];
       }),
       visited: [...new Set([...visited, ...stored])],
     } satisfies ProfileSignIns;

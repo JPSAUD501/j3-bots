@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { Buffer } from "node:buffer";
 import type {
   BrowserCookie,
   BrowserCookieChanges,
   BrowserCookieKey,
+  BrowserIndexedDb,
   BrowserOriginStorage,
 } from "@j3-bots/contracts";
 import {
@@ -229,28 +231,21 @@ export const diffHostCookies = (input: {
   return { set, removed };
 };
 
-/** One origin the jar keeps, and whether its databases are kept too. */
+/**
+ * One origin the jar keeps. Its storage has `indexedDb` once the jar keeps
+ * the origin's databases: from when a host that reads databases first read
+ * them, if they fit the room the jar has for them. An origin whose databases
+ * did not is `tooBig`: the jar keeps none of its databases, and asks no host
+ * for them, until the site is signed out of.
+ */
 export interface JarOrigin {
   readonly storage: BrowserOriginStorage;
-  readonly indexedDb: boolean;
+  readonly tooBig?: true;
 }
 
-/**
- * The jar's `kept` with a host's `read` of the origin: the host's
- * `localStorage`, and its databases where it read them.
- */
-const takeOrigin = (kept: JarOrigin | undefined, read: BrowserOriginStorage): JarOrigin => {
-  const indexedDb = kept?.indexedDb ?? false;
-  const databases = indexedDb ? (read.indexedDb ?? kept?.storage.indexedDb) : undefined;
-  return {
-    indexedDb,
-    storage: {
-      origin: read.origin,
-      localStorage: read.localStorage,
-      ...(databases === undefined ? {} : { indexedDb: databases }),
-    },
-  };
-};
+/** How many bytes an origin's databases take, encoded as the jar keeps them. */
+export const databaseBytes = (databases: ReadonlyArray<BrowserIndexedDb> | undefined) =>
+  databases === undefined ? 0 : Buffer.byteLength(JSON.stringify(databases), "utf8");
 
 /** What reconciling one origin's storage gives. */
 export interface OriginReconcile {
@@ -263,29 +258,72 @@ export interface OriginReconcile {
 
 /**
  * Brings one origin's storage on a host and in the jar together, as
- * `reconcileCookies` does a host's cookies: `read` is the host's, read with
- * its databases when `indexedDb` (the host reads them, and the jar keeps
- * them). `baseline` is the host's digest for the origin: undefined when the
- * host has a baseline without the origin, which held nothing then; `none`
- * when the host has no baseline at all.
+ * `reconcileCookies` does a host's cookies. `read` is the host's, with its
+ * databases when the host read them. `baseline` is the host's digest for
+ * the origin: undefined when the host has a baseline without the origin,
+ * which held nothing then; `none` when the host has no baseline at all.
+ *
+ * The databases are compared only when both sides have them. The jar takes
+ * the host's along with its `localStorage`, and takes them anyway when it
+ * kept none of the origin's yet, as long as they take no more than `room`
+ * bytes; databases that take more make the origin `tooBig`, and the jar
+ * drops what it kept of them.
  */
 export const reconcileOrigin = (input: {
   readonly kept: JarOrigin | undefined;
   readonly read: BrowserOriginStorage;
-  readonly indexedDb: boolean;
+  readonly room: number;
   readonly baseline: Digest | undefined | "none";
   readonly revoked: boolean;
   readonly digests: Digests;
 }): OriginReconcile => {
-  const { kept, read, indexedDb, baseline, revoked, digests } = input;
-  const view = storageView(kept?.storage ?? emptyStorage(read.origin), indexedDb);
-  const heldDigest = digests.storageDigest(read);
+  const { kept, read, room, baseline, revoked, digests } = input;
+  const known = kept?.storage.indexedDb !== undefined;
+  const readsDatabases = read.indexedDb !== undefined;
+  const both = known && readsDatabases;
+  const view = storageView(kept?.storage ?? emptyStorage(read.origin), both);
+  const heldDigest = digests.storageDigest(storageView(read, both));
   const keptDigest = digests.storageDigest(view);
-  if (heldDigest === keptDigest) return { jar: undefined, host: undefined, baseline: keptDigest };
-  const toJar = { jar: takeOrigin(kept, read), host: undefined, baseline: heldDigest };
-  const toHost = { jar: undefined, host: view, baseline: keptDigest };
-  if (baseline === "none") return isEmptyStorage(view) ? toJar : toHost;
-  const was = baseline ?? digests.storageDigest(storageView(emptyStorage(read.origin), indexedDb));
-  if (heldDigest === was) return toHost;
-  return revoked ? toHost : toJar;
+  /** Which side takes the other's storage. */
+  const taker = ((): "neither" | "host" | "jar" => {
+    if (heldDigest === keptDigest) return "neither";
+    if (baseline === "none") return isEmptyStorage(view) ? "jar" : "host";
+    const was = baseline ?? digests.storageDigest(storageView(emptyStorage(read.origin), both));
+    // A baseline taken before the jar kept the origin's databases names its
+    // `localStorage` alone.
+    const unchanged =
+      heldDigest === was || (both && digests.storageDigest(storageView(read, false)) === was);
+    return unchanged || revoked ? "host" : "jar";
+  })();
+
+  const offered =
+    readsDatabases && kept?.tooBig !== true && (taker === "jar" || !known)
+      ? read.indexedDb
+      : undefined;
+  const tooBig = kept?.tooBig === true || (offered !== undefined && databaseBytes(offered) > room);
+  const databases = tooBig ? undefined : (offered ?? kept?.storage.indexedDb);
+  const jar: JarOrigin | undefined =
+    taker === "jar" || offered !== undefined
+      ? {
+          storage: {
+            origin: read.origin,
+            localStorage: taker === "jar" ? read.localStorage : (kept?.storage.localStorage ?? []),
+            ...(databases === undefined ? {} : { indexedDb: databases }),
+          },
+          ...(tooBig ? { tooBig: true } : {}),
+        }
+      : undefined;
+
+  // What the host holds afterwards, as it will be compared next time.
+  const hostDatabases = taker === "host" && both ? view.indexedDb : read.indexedDb;
+  const held: BrowserOriginStorage = {
+    origin: read.origin,
+    localStorage: taker === "host" ? view.localStorage : read.localStorage,
+    ...(hostDatabases === undefined ? {} : { indexedDb: hostDatabases }),
+  };
+  return {
+    jar,
+    host: taker === "host" ? view : undefined,
+    baseline: digests.storageDigest(storageView(held, databases !== undefined && readsDatabases)),
+  };
 };

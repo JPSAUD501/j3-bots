@@ -2003,6 +2003,7 @@ export const en = {
     "Your sign-ins can’t be opened, so the browser isn’t sharing them. If the secrets’ key changed or the file was damaged, sign out of all sites to start over.",
   "settings.siteSignIns.locked":
     "Your sign-ins stay locked until J3 Bots can read your secrets again, so the browser isn’t sharing them. Secrets says what’s wrong.",
+  "settings.siteSignIns.tooBig": "Too big to carry between browsers",
   "settings.siteSignIns.signOutSite": "Sign out",
   "settings.siteSignIns.signOutSite.label": "Sign out of {site}",
   "settings.siteSignIns.signOutSite.failed": "Didn’t sign out of {site}. Try again.",

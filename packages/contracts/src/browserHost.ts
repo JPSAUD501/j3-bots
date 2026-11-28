@@ -155,6 +155,12 @@ export const BrowserOriginStorage = Schema.Struct({
 });
 export type BrowserOriginStorage = typeof BrowserOriginStorage.Type;
 
+/** What `storage.write` did: the origins it left as they were, to be written again. */
+export const BrowserStorageWritten = Schema.Struct({
+  waiting: Schema.optionalKey(Schema.Array(Schema.String)),
+});
+export type BrowserStorageWritten = typeof BrowserStorageWritten.Type;
+
 // ---------------------------------------------------------------------------
 // Typing a saved login
 
@@ -201,7 +207,8 @@ export const MAX_BROWSER_FILL_LENGTH = 10_000;
  * so a newer host's flags pass an older server by.
  *
  * - `screencast`, `input`: a viewer can watch and drive its tabs.
- * - `cookies`, `storage`, `indexedDb`: it reads and writes sign-ins.
+ * - `cookies`, `storage`, `indexedDb`: it reads and writes sign-ins;
+ *   `indexedDb`, origins' databases too (`storage.read`, `storage.write`).
  * - `files`: it hands the server a file a bot's action downloaded
  *   (`download.finished`, `download.take`) and takes files for a bot's
  *   upload (`files.put`).
@@ -650,9 +657,16 @@ export const BrowserHostRpcs = RpcGroup.make(
     success: Schema.Struct({ origins: Schema.Array(BrowserOriginStorage) }),
     error: BrowserHostError,
   }),
-  /** Replaces each given origin's `localStorage`, and its databases where given. */
+  /**
+   * Replaces each given origin's `localStorage`, and its databases where
+   * given. `waiting` names the origins it wrote nothing of: their databases
+   * needed a version change that a page of the origin may hold back, so the
+   * host waits for none and the server writes them again later. Every other
+   * origin given was written.
+   */
   Rpc.make("storage.write", {
     payload: { origins: Schema.Array(BrowserOriginStorage) },
+    success: BrowserStorageWritten,
     error: BrowserHostError,
   }),
   /**

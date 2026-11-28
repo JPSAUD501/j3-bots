@@ -1064,7 +1064,7 @@ function toData(state: State, secrets: SecretsView): ShellData {
       _tag: "ready",
       value: {
         status: "ready",
-        sites: [{ site: "docevida.example" }, { site: "correiodobairro.example" }],
+        sites: [{ site: "docevida.example" }, { site: "correiodobairro.example", tooBig: true }],
       },
       stale: false,
     },

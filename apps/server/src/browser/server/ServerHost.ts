@@ -13,6 +13,7 @@ import {
   type BrowserHostHello,
   BrowserIndexedDb,
   type BrowserOriginStorage,
+  type BrowserStorageWritten,
   BrowserTabRef,
   MAX_ATTACHMENT_NAME_LENGTH,
   MAX_ATTACHMENT_SIZE,
@@ -525,39 +526,39 @@ export const launchServerHost = (input: {
      * from the probe. Databases that differ only in their records are filled
      * again in place, past a tab of the origin that holds them open. One that
      * must be deleted, or opened at another version, waits until no tab
-     * shows the origin, so no page of it can hold the change back: until then
-     * the write fails, and the sign-ins try again later. Before that change
-     * the origin's service workers are stopped, as they may hold one open
-     * too (**Assumed**: nothing else of a context does).
+     * shows the origin, so no page of it can hold the change back: until
+     * then nothing of the origin is written, it is answered `waiting`, and
+     * the sign-ins write it again later. Before that change the origin's
+     * service workers are stopped, as they may hold one open too
+     * (**Assumed**: nothing else of a context does).
      */
     const writeStorage = (origins: ReadonlyArray<BrowserOriginStorage>) =>
-      Effect.forEach(
-        origins,
-        (stored) =>
-          inProbe(stored.origin, async (page, cdp) => {
-            const databases = stored.indexedDb;
-            if (databases !== undefined) {
-              const written = await page.evaluate(replaceDatabases, {
-                databases,
-                versionChanges: false,
-              });
-              if (written === "version-change") {
-                if (showsOrigin(stored.origin))
-                  throw new BrowserHostError({
-                    reason: "page",
-                    detail: "A tab of the origin may hold its databases open.",
-                  });
-                await cdp.send("ServiceWorker.enable");
-                await cdp.send("ServiceWorker.stopAllWorkers");
-                await page.evaluate(replaceDatabases, { databases, versionChanges: true });
-              }
+      Effect.forEach(origins, (stored) =>
+        inProbe(stored.origin, async (page, cdp) => {
+          const databases = stored.indexedDb;
+          if (databases !== undefined) {
+            const written = await page.evaluate(replaceDatabases, {
+              databases,
+              versionChanges: false,
+            });
+            if (written === "version-change") {
+              if (showsOrigin(stored.origin)) return "waiting";
+              await cdp.send("ServiceWorker.enable");
+              await cdp.send("ServiceWorker.stopAllWorkers");
+              await page.evaluate(replaceDatabases, { databases, versionChanges: true });
             }
-            await page.evaluate((items) => {
-              localStorage.clear();
-              for (const item of items) localStorage.setItem(item.name, item.value);
-            }, stored.localStorage);
-          }),
-        { discard: true },
+          }
+          await page.evaluate((items) => {
+            localStorage.clear();
+            for (const item of items) localStorage.setItem(item.name, item.value);
+          }, stored.localStorage);
+          return "written";
+        }).pipe(Effect.map((outcome) => (outcome === "waiting" ? [stored.origin] : []))),
+      ).pipe(
+        Effect.map((outcomes): BrowserStorageWritten => {
+          const waiting = outcomes.flat();
+          return waiting.length === 0 ? {} : { waiting };
+        }),
       );
 
     /**

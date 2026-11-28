@@ -20,12 +20,7 @@ export {
   remotePageHost,
 } from "./PageHost.ts";
 export { type CdpCookieParam, cdpParamOf, cdpRemovalOf, cookieOfCdp } from "./cookies.ts";
-export {
-  type ProfileOrigin,
-  type ProfileSignIns,
-  ProfileUnreadable,
-  readProfileSignIns,
-} from "./profile.ts";
+export { type ProfileSignIns, ProfileUnreadable, readProfileSignIns } from "./profile.ts";
 export {
   HOST_SOCKET_PING,
   HOST_SOCKET_SILENCE,

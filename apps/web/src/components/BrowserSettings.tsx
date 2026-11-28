@@ -86,7 +86,7 @@ function SitesSection({
         <p className="text-xs text-muted-foreground">{t("settings.siteSignIns.none")}</p>
       ) : (
         <ul className="flex flex-col gap-1.5">
-          {signIns.sites.map(({ site }) => {
+          {signIns.sites.map(({ site, tooBig }) => {
             const state = signingOut.get(site);
             return (
               <li
@@ -95,6 +95,11 @@ function SitesSection({
               >
                 <span className="flex min-w-0 flex-1 flex-col">
                   <span className="truncate text-sm">{site}</span>
+                  {tooBig === true && (
+                    <span className="text-2xs text-muted-foreground">
+                      {t("settings.siteSignIns.tooBig")}
+                    </span>
+                  )}
                   <span role="alert" className="text-2xs text-blocked empty:hidden">
                     {state === "failed" && t("settings.siteSignIns.signOutSite.failed", { site })}
                   </span>

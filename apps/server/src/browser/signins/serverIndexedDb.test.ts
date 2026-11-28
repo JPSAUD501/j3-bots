@@ -118,36 +118,6 @@ describe.skipIf(executablePath === undefined)("a sign-in kept in IndexedDB", () 
           Effect.provide(SecureRandom.layerWebCrypto),
         );
         const signIns = yield* makeSignIns({ jar, digests: makeDigests(key) });
-        // The move brought the app's database in, signed out: the jar keeps
-        // the origin's databases from then on.
-        yield* signIns.bringIn({
-          cookies: [],
-          origins: [
-            {
-              indexedDb: true,
-              storage: {
-                origin,
-                localStorage: [],
-                indexedDb: [
-                  {
-                    name: DATABASE,
-                    version: 1,
-                    stores: [
-                      {
-                        name: STORE,
-                        autoIncrement: false,
-                        keyPath: "fbase_key",
-                        records: [],
-                        indexes: [],
-                      },
-                    ],
-                  },
-                ],
-              },
-            },
-          ],
-          sites: [],
-        });
         const tab = BrowserTabRef.make("tab-1");
         const launch = { executable: executablePath, platform: "linux64" } as const;
 
@@ -174,7 +144,7 @@ describe.skipIf(executablePath === undefined)("a sign-in kept in IndexedDB", () 
   );
 
   it.live(
-    "at a new version waits until no tab of the site can hold its database open",
+    "at a new version waits, unwritten, until no tab of the site can hold its database open",
     () =>
       Effect.gen(function* () {
         if (executablePath === undefined) return;
@@ -206,11 +176,10 @@ describe.skipIf(executablePath === undefined)("a sign-in kept in IndexedDB", () 
             },
           ],
         };
-        const refused = yield* Effect.exit(host.writeStorage([upgraded]));
-        assert.isTrue(Exit.isFailure(refused));
+        assert.deepStrictEqual(yield* host.writeStorage([upgraded]), { waiting: [origin] });
 
         yield* host.close(tab);
-        yield* host.writeStorage([upgraded]);
+        assert.deepStrictEqual(yield* host.writeStorage([upgraded]), {});
         const { origins } = yield* host.readStorage({ origins: [origin], indexedDb: true });
         assert.deepStrictEqual(
           origins.map(({ indexedDb }) => indexedDb),

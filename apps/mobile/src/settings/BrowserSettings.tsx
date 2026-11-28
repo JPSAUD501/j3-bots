@@ -75,7 +75,7 @@ function SitesSection({
       ) : signIns.sites.length === 0 ? (
         <Quiet>{t("settings.siteSignIns.none")}</Quiet>
       ) : (
-        signIns.sites.map(({ site }) => {
+        signIns.sites.map(({ site, tooBig }) => {
           const state = signingOut.get(site);
           return (
             <View
@@ -86,6 +86,11 @@ function SitesSection({
                 <Text numberOfLines={1} className="text-base text-foreground">
                   {site}
                 </Text>
+                {tooBig === true ? (
+                  <Text className="text-sm text-muted-foreground">
+                    {t("settings.siteSignIns.tooBig")}
+                  </Text>
+                ) : null}
                 <Problem>
                   {state === "failed"
                     ? t("settings.siteSignIns.signOutSite.failed", { site })

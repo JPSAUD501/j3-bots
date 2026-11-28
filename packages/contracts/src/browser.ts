@@ -187,7 +187,17 @@ export type BrowserSite = typeof BrowserSite.Type;
  */
 export const BrowserSignIns = Schema.Struct({
   status: Schema.Literals(["ready", "unreadable", "locked"]),
-  sites: Schema.Array(Schema.Struct({ site: BrowserSite })),
+  sites: Schema.Array(
+    Schema.Struct({
+      site: BrowserSite,
+      /**
+       * An origin of the site keeps more in IndexedDB than the sign-ins
+       * carry between browsers: its cookies and `localStorage` still go to
+       * every browser, its databases stay where they are.
+       */
+      tooBig: Schema.optionalKey(Schema.Literal(true)),
+    }),
+  ),
 });
 export type BrowserSignIns = typeof BrowserSignIns.Type;
 

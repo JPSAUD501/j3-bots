@@ -50,18 +50,18 @@ describe.skipIf(executablePath === undefined)("a profile's sign-ins", () => {
         assert.strictEqual(plain?.domain, "mail.example.test");
         assert.strictEqual(plain?.sameSite, "unspecified");
 
-        const byOrigin = new Map(read.origins.map((origin) => [origin.storage.origin, origin]));
+        const byOrigin = new Map(read.origins.map((origin) => [origin.origin, origin]));
         const mail = byOrigin.get(MAIL);
-        assert.deepStrictEqual(mail?.storage.localStorage, [{ name: "token", value: "t1" }]);
-        assert.strictEqual(mail?.indexedDb, true);
+        assert.deepStrictEqual(mail?.localStorage, [{ name: "token", value: "t1" }]);
         assert.deepStrictEqual(
-          mail?.storage.indexedDb?.map((database) => [database.name, database.version]),
+          mail?.indexedDb?.map((database) => [database.name, database.version]),
           [["mail", 2]],
         );
         const notes = byOrigin.get(NOTES);
         assert.deepStrictEqual(notes, {
-          indexedDb: false,
-          storage: { origin: NOTES, localStorage: [{ name: "theme", value: "dark" }] },
+          origin: NOTES,
+          localStorage: [{ name: "theme", value: "dark" }],
+          indexedDb: [],
         });
 
         // Its pages, from their storage; not the domain of a cookie alone.

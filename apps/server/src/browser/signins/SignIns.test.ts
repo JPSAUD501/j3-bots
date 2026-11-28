@@ -4,6 +4,7 @@ import { assert, it } from "@effect/vitest";
 import {
   type BrowserCookie,
   type BrowserHostCapabilities,
+  type BrowserIndexedDb,
   type BrowserOriginStorage,
   type BrowserSignIns,
   BrowserTabRef,
@@ -22,7 +23,12 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as TestClock from "effect/testing/TestClock";
 import { keyOfCookie, makeDigests } from "./canonical.ts";
 import { openJarFile } from "./JarFile.ts";
-import { makeSignIns, type SignInsAttachment } from "./SignIns.ts";
+import {
+  DATABASE_LIMITS,
+  type DatabaseLimits,
+  makeSignIns,
+  type SignInsAttachment,
+} from "./SignIns.ts";
 
 // The sync of the shared sign-ins against fake hosts in memory, over a jar
 // in a temporary file. A fake host with change events reports nothing on
@@ -55,6 +61,23 @@ const stored = (origin: string, token: string): BrowserOriginStorage => ({
   localStorage: [{ name: "token", value: token }],
 });
 
+/** A site's database whose one record holds `size` characters, a little more encoded. */
+const databasesOf = (size: number): ReadonlyArray<BrowserIndexedDb> => [
+  {
+    name: "auth",
+    version: 1,
+    stores: [
+      {
+        name: "users",
+        autoIncrement: false,
+        keyPath: "id",
+        records: [{ value: { id: "me", token: "x".repeat(size) } }],
+        indexes: [],
+      },
+    ],
+  },
+];
+
 const EVENTS: BrowserHostCapabilities = {
   cookies: true,
   storage: true,
@@ -66,14 +89,18 @@ const READ_ONLY_AGAIN: BrowserHostCapabilities = { cookies: true, storage: true 
 const newKey = () => globalThis.crypto.getRandomValues(new Uint8Array(32));
 
 /** A jar in `folder`, or a new one, under `key`, or a new one, and the sign-ins over it. */
-const signInsIn = Effect.fn(function* (folder?: string, key = newKey()) {
+const signInsIn = Effect.fn(function* (
+  folder?: string,
+  key = newKey(),
+  limits: DatabaseLimits = DATABASE_LIMITS,
+) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const where = folder ?? (yield* fs.makeTempDirectoryScoped({ prefix: "j3-signins-" }));
   const jar = yield* openJarFile(path.join(where, "signins.sqlite"), key).pipe(
     Effect.provide(SecureRandom.layerWebCrypto),
   );
-  return yield* makeSignIns({ jar, digests: makeDigests(key) });
+  return yield* makeSignIns({ jar, digests: makeDigests(key) }, limits);
 });
 
 type Signins = Effect.Success<ReturnType<typeof signInsIn>>;
@@ -494,7 +521,7 @@ it.layer(NodeServices.layer)("the shared sign-ins", (it) => {
       };
       yield* signIns.bringIn({
         cookies: [],
-        origins: [{ indexedDb: true, storage: kept }],
+        origins: [kept],
         sites: [],
       });
       const server = yield* host({ ...READ_ONLY_AGAIN, indexedDb: true });
@@ -506,6 +533,7 @@ it.layer(NodeServices.layer)("the shared sign-ins", (it) => {
       // gives the origin without its databases, as often as it is read.
       const unreadable = stored(kept.origin, "t2");
       yield* server.siteStorage(unreadable);
+      yield* server.databasesUnreadable(kept.origin);
       yield* visits(onServer, `${kept.origin}/`);
       yield* onServer.flush;
       yield* onServer.flush;
@@ -515,6 +543,95 @@ it.layer(NodeServices.layer)("the shared sign-ins", (it) => {
       const onDesktop = yield* attach(signIns, desktop);
       yield* onDesktop.prepare(`${kept.origin}/`);
       assert.deepStrictEqual(yield* desktop.storage, [kept]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect(
+    "a site's databases reach every host that reads them, from wherever they were made",
+    () =>
+      Effect.gen(function* () {
+        const signIns = yield* signInsIn();
+        const a = yield* host({ ...EVENTS, indexedDb: true }, "store-a-0000000000");
+        const b = yield* host({ ...EVENTS, indexedDb: true }, "store-b-0000000000");
+        const c = yield* host(EVENTS, "store-c-0000000000");
+        const onA = yield* attach(signIns, a);
+        yield* attach(signIns, b);
+        yield* attach(signIns, c);
+        const saved = { ...stored("https://app.x.test", "t1"), indexedDb: databasesOf(10) };
+        yield* siteKeeps(a, onA, saved);
+        assert.deepStrictEqual(yield* b.storage, [saved]);
+        assert.deepStrictEqual(yield* c.storage, [stored("https://app.x.test", "t1")]);
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect("databases over a limit stay where they are, and their site is marked", () =>
+    Effect.gen(function* () {
+      const signIns = yield* signInsIn(undefined, undefined, { origin: 1_000, total: 1_500 });
+      const a = yield* host({ ...EVENTS, indexedDb: true }, "store-a-0000000000");
+      const b = yield* host({ ...EVENTS, indexedDb: true }, "store-b-0000000000");
+      const onA = yield* attach(signIns, a);
+      yield* attach(signIns, b);
+      // Over the limit of one origin; within it; within it, but over the
+      // limit of them all with the one before.
+      const big = { ...stored("https://x.test", "x1"), indexedDb: databasesOf(1_000) };
+      const fits = { ...stored("https://y.test", "y1"), indexedDb: databasesOf(600) };
+      const late = { ...stored("https://z.test", "z1"), indexedDb: databasesOf(600) };
+      for (const [storage, tab] of [
+        [big, "tab-1"],
+        [fits, "tab-2"],
+        [late, "tab-3"],
+      ] as const) {
+        yield* visits(onA, `${storage.origin}/`, tab);
+        yield* siteKeeps(a, onA, storage);
+      }
+
+      assert.deepStrictEqual(
+        [...(yield* b.storage)].sort((one, other) => one.origin.localeCompare(other.origin)),
+        [stored(big.origin, "x1"), fits, stored(late.origin, "z1")],
+      );
+      assert.deepStrictEqual((yield* sitesOf(signIns)).sites, [
+        { site: "x.test", tooBig: true },
+        { site: "y.test" },
+        { site: "z.test", tooBig: true },
+      ]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("databases a tab holds back wait alone: a cookie and a sign-out reach the host", () =>
+    Effect.gen(function* () {
+      const signIns = yield* signInsIn();
+      const desktop = yield* host({ ...EVENTS, indexedDb: true }, "store-a-0000000000");
+      const server = yield* host({ ...READ_ONLY_AGAIN, indexedDb: true });
+      const onDesktop = yield* attach(signIns, desktop);
+      yield* attach(signIns, server);
+      const app = "https://app.x.test";
+      const first = { ...stored(app, "t1"), indexedDb: databasesOf(10) };
+      yield* siteKeeps(desktop, onDesktop, first);
+      assert.deepStrictEqual(yield* server.storage, [first]);
+
+      // A tab of the app on the server holds its database open.
+      yield* server.holdDatabases(app, true);
+      const second = { ...stored(app, "t2"), indexedDb: databasesOf(20) };
+      yield* siteKeeps(desktop, onDesktop, second);
+      assert.deepStrictEqual(yield* server.storage, [first]);
+
+      // Everything else goes on at once.
+      yield* siteSets(desktop, onDesktop, cookie("sid", "s1", "y.test"));
+      assert.deepStrictEqual(yield* held(server), ["sid=s1"]);
+      const other = stored("https://z.test", "z1");
+      yield* siteKeeps(desktop, onDesktop, other);
+      assert.deepStrictEqual(yield* tokens(server), [`${app}=t1`, "https://z.test=z1"]);
+      yield* signIns.signOutSite("y.test");
+      assert.deepStrictEqual(yield* held(server), []);
+
+      // Once the tab lets go, the app's origin is written on its own try.
+      yield* server.holdDatabases(app, false);
+      yield* TestClock.adjust("5 seconds");
+      yield* settle;
+      assert.deepStrictEqual(
+        (yield* server.storage).find((storage) => storage.origin === app),
+        second,
+      );
     }).pipe(Effect.scoped),
   );
 
@@ -602,10 +719,7 @@ it.layer(NodeServices.layer)("the shared sign-ins", (it) => {
       yield* signIns.signOutSite("x.test");
       yield* signIns.bringIn({
         cookies: [cookie("sid", "old", "x.test"), cookie("sid", "old", "y.test")],
-        origins: [
-          { indexedDb: false, storage: stored("https://x.test", "t0") },
-          { indexedDb: false, storage: stored("https://y.test", "t0") },
-        ],
+        origins: [stored("https://x.test", "t0"), stored("https://y.test", "t0")],
         sites: ["x.test", "y.test"],
       });
       assert.deepStrictEqual(yield* listed(signIns), ["y.test"]);

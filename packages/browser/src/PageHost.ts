@@ -12,6 +12,7 @@ import {
   BrowserHostRpcs,
   type BrowserImage,
   type BrowserOriginStorage,
+  type BrowserStorageWritten,
   type BrowserPageSnapshot,
   type BrowserPageState,
   type BrowserScreencastFrame,
@@ -95,7 +96,7 @@ export interface PageHost {
   ) => Effect.Effect<{ readonly origins: ReadonlyArray<BrowserOriginStorage> }, BrowserHostError>;
   readonly writeStorage: (
     origins: ReadonlyArray<BrowserOriginStorage>,
-  ) => Effect.Effect<void, BrowserHostError>;
+  ) => Effect.Effect<BrowserStorageWritten, BrowserHostError>;
   readonly clearStorage: (
     clear: PageHostPayload<"storage.clear">["clear"],
   ) => Effect.Effect<void, BrowserHostError>;
