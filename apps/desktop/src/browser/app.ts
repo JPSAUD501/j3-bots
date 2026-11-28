@@ -289,6 +289,27 @@ export const serveBrowser = (options: {
       downloads: [...downloads.values()].map((download) => download.entry).toReversed(),
     });
 
+    /** Whether `window` is on the person's screen: shown, and not minimized. */
+    const onScreen = (window: BrowserWindow) =>
+      !window.isDestroyed() && window.isVisible() && !window.isMinimized();
+
+    /**
+     * Keeps `window`'s tabs in the shelf while it is off the screen, hidden
+     * or minimized, and draws them in it again once it is back: a page that
+     * begins anew in a hidden window, as one a navigation moves to another
+     * site does, never paints (verified on Linux, Electron 44).
+     */
+    const shelveWhileAway = (window: BrowserWindow) => {
+      const away = () => {
+        browser.evacuate(window);
+        changed();
+      };
+      window.on("hide", away);
+      window.on("minimize", away);
+      window.on("show", changed);
+      window.on("restore", changed);
+    };
+
     /** Draws each place's front tab where its window's page asked, and hides every other. */
     const draw = () => {
       // A still is of the tab in front there: one that went elsewhere, or closed, has none here.
@@ -305,7 +326,11 @@ export const serveBrowser = (options: {
         const covered = pane.placement.covered || held.has(ref);
         const inFront = front[at.place] === ref;
         const shows =
-          inFront && bounds !== null && at.failed === null && shownUrl(tab.contents) !== "";
+          inFront &&
+          onScreen(pane.window) &&
+          bounds !== null &&
+          at.failed === null &&
+          shownUrl(tab.contents) !== "";
         if (shows && covered) {
           if (pane.still !== ref) {
             pane.still = ref;
@@ -361,6 +386,7 @@ export const serveBrowser = (options: {
         draw();
       });
     };
+    shelveWhileAway(options.main);
 
     /** The tab the person looks at in `place`: none while it is not on screen. */
     const lookedAt = (place: BrowserPlace) =>
@@ -410,6 +436,7 @@ export const serveBrowser = (options: {
       const pane: Pane = { window, placement: { bounds: null, covered: false }, still: null };
       panes.set("window", pane);
       window.once("ready-to-show", () => window.show());
+      shelveWhileAway(window);
       window.on("close", () => {
         // Its tabs go beside the conversation; their views go to the shelf first.
         browser.evacuate(window);

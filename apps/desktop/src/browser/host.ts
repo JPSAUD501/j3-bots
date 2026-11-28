@@ -97,7 +97,7 @@ export interface DesktopBrowser {
   readonly show: (ref: BrowserTabRef, window: BaseWindow, bounds: Rectangle) => void;
   /** Hides the tab's view where it is: a hidden view keeps its page, and paints when watched. */
   readonly hide: (ref: BrowserTabRef) => void;
-  /** Moves every tab `window` holds to the hidden shelf, before the window goes. */
+  /** Moves every tab `window` holds to the shelf, before the window goes or hides. */
   readonly evacuate: (window: BaseWindow) => void;
   /** The person used the tab from the app's own controls: its address, back or forward. */
   readonly personUsed: (ref: BrowserTabRef) => Effect.Effect<void>;
@@ -143,8 +143,8 @@ const SESSION_CLEAR_MS = 2_000;
 const randomId = (bytes = 16) =>
   Buffer.from(SecureRandom.randomBytesUnsafe(bytes)).toString("base64url");
 /**
- * The size of a tab no window shows: its page's viewport. The shelf is
- * hidden, and a hidden window has no content size to take it from.
+ * The size of a tab no window shows: its page's viewport. The shelf is a
+ * single pixel, so its views take their size from their own bounds.
  */
 const SHELF_SIZE = { width: 1280, height: 800 };
 
@@ -276,22 +276,35 @@ export const makeDesktopBrowser = (options: {
     const shared = electronSession.fromPartition(BROWSER_PARTITION);
     prepareSession(shared, identity);
 
-    // The window tabs no other window shows live in, hidden: a tab in it
-    // still paints while it is watched or driven.
+    // The window tabs no other window shows live in. It stays shown, as a
+    // single see-through pixel out of sight that takes no input: a page
+    // whose renderer begins while its window is hidden never paints, though
+    // it is watched (verified on Linux, Electron 44), as a new tab's page and
+    // one a navigation moves to another site do. A tab in it paints while it
+    // is watched or driven.
     const shelf = yield* Effect.acquireRelease(
       Effect.sync(() => {
         const window = new BaseWindow({
           show: false,
           x: -32_000,
           y: -32_000,
-          ...SHELF_SIZE,
-          skipTaskbar: true,
+          width: 1,
+          height: 1,
+          frame: false,
+          transparent: true,
+          hasShadow: false,
+          resizable: false,
+          movable: false,
+          minimizable: false,
+          maximizable: false,
+          fullscreenable: false,
           focusable: false,
+          skipTaskbar: true,
+          hiddenInMissionControl: true,
         });
-        // Shown once, out of sight: a window never shown draws nothing at all,
-        // while one hidden after it was shown paints when asked (verified on Electron 44).
+        window.excludedFromShownWindowsMenu = true;
+        window.setIgnoreMouseEvents(true);
         window.showInactive();
-        window.hide();
         return window;
       }),
       (window) => Effect.sync(() => window.destroy()),
@@ -605,7 +618,7 @@ export const makeDesktopBrowser = (options: {
     // -----------------------------------------------------------------------
     // Tabs
 
-    /** A new tab's view, hidden in the shelf at the shelf's size, so its page has a viewport. */
+    /** A new tab's view, hidden in the shelf at its own size, so its page has a viewport. */
     const viewFor = (session: Session, adopted?: WebContents) => {
       const view = new WebContentsView({
         ...(adopted === undefined ? {} : { webContents: adopted }),

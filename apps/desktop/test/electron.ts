@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// @effect-diagnostics nodeBuiltinImport:off -- Electron's package answers its executable's path only to require().
+// @effect-diagnostics nodeBuiltinImport:off -- Electron's package answers its executable's path only to require(), and a fake site is a plain node:http server.
+import * as NodeHttp from "node:http";
 import * as NodeModule from "node:module";
 import { AppLinkUrl, BRIDGE_KEY, OpenResult, TokenProtection } from "@j3-bots/desktop-bridge";
 import * as Effect from "effect/Effect";
@@ -131,3 +132,35 @@ export const openToken = (page: Page, sealed: string) =>
       ),
     ),
   );
+
+/** A fake site on the loopback that answers `page` to every request; answers its origin. Closed with the scope. */
+export const fakeSite = (page: string) =>
+  Effect.acquireRelease(
+    Effect.callback<NodeHttp.Server>((resume) => {
+      const server = NodeHttp.createServer((_request, response) =>
+        response.writeHead(200, { "content-type": "text/html" }).end(page),
+      );
+      server.once("error", (cause) => resume(Effect.die(cause)));
+      server.listen(0, "127.0.0.1", () => resume(Effect.succeed(server)));
+    }),
+    (server) =>
+      Effect.callback<void>((resume) => {
+        server.close(() => resume(Effect.void));
+      }),
+  ).pipe(
+    Effect.flatMap((server) => {
+      const address = server.address();
+      return address === null || typeof address === "string"
+        ? Effect.die("not an IP listener")
+        : Effect.succeed(`http://127.0.0.1:${address.port}`);
+    }),
+  );
+
+/** Pairs the app through the pairing link it was launched with, as the person does. */
+export const pairFromLink = (page: Page) =>
+  Effect.promise(async () => {
+    await page.getByText("This pairing link is for").waitFor({ timeout: STEP });
+    await page.getByRole("button", { name: "Continue" }).click();
+    await page.getByLabel("Pairing code").waitFor({ timeout: STEP });
+    await page.getByRole("button", { name: "Pair", exact: true }).click();
+  });
