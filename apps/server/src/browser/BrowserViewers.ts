@@ -240,14 +240,18 @@ export const layer = Layer.effect(
         }),
       );
 
-    /** Gives the host its acknowledgement once a socket drew its newest picture. */
-    const settle = (feed: Feed, drawn: Picture) =>
+    /** Gives the host the acknowledgement it waits on, if it waits on one. */
+    const payOwed = (feed: Feed) =>
       Effect.suspend(() => {
         const owed = feed.owed;
-        if (owed === null || owed.seq !== drawn.seq) return Effect.void;
+        if (owed === null) return Effect.void;
         feed.owed = null;
         return owed.host.screencastAck({ tab: feed.ref, frame: owed.frame }).pipe(Effect.ignore);
       });
+
+    /** Gives the host its acknowledgement once a socket drew its newest picture. */
+    const settle = (feed: Feed, drawn: Picture) =>
+      feed.owed?.seq === drawn.seq ? payOwed(feed) : Effect.void;
 
     /**
      * The tab's screencast, from each host it runs on in turn, at the size
@@ -387,24 +391,29 @@ export const layer = Layer.effect(
       return Option.some(feed);
     });
 
-    /** The socket left: the feed closes with its last socket. */
-    const leave = (feed: Feed, viewer: Viewer) =>
-      feedLock.withPermits(1)(
+    /**
+     * The socket left: the feed closes with its last socket. It leaves under
+     * the feed's own lock, so the host's acknowledgement waits on no other
+     * tab's feed; a socket that joins before the feed closes keeps it open.
+     */
+    const leave = Effect.fnUntraced(function* (feed: Feed, viewer: Viewer) {
+      yield* feed.lock.withPermits(1)(
+        Effect.suspend(() => {
+          feed.viewers.delete(viewer);
+          // With no socket left to draw it, the host's newest picture is not waited on,
+          // whichever picture the last socket was drawing.
+          return feed.viewers.size === 0 ? payOwed(feed) : Effect.void;
+        }),
+      );
+      yield* feedLock.withPermits(1)(
         Effect.gen(function* () {
-          const last = yield* feed.lock.withPermits(1)(
-            Effect.gen(function* () {
-              feed.viewers.delete(viewer);
-              // A picture it never drew is not waited on.
-              const unacked = viewer.inFlight ?? viewer.pending;
-              if (unacked !== null && feed.viewers.size === 0) yield* settle(feed, unacked);
-              return feed.viewers.size === 0;
-            }),
-          );
-          if (!last || feeds.get(feed.ref) !== feed) return;
+          // Sockets join under `feedLock` too, so none joins between this look and the close.
+          if (feed.viewers.size > 0 || feeds.get(feed.ref) !== feed) return;
           feeds.delete(feed.ref);
           yield* Scope.close(feed.scope, Exit.void);
         }),
       );
+    });
 
     /** Joins the feed, in place of the device's socket before it on the tab. */
     const join = (feed: Feed, viewer: Viewer) =>
