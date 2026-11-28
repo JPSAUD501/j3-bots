@@ -40,6 +40,9 @@ interface PageInputElement extends PageHTMLElement {
   readonly disabled: boolean;
   readonly readOnly: boolean;
   value: string;
+  /** Null for a type with no text selection, such as `email` or `number`. */
+  readonly selectionStart: number | null;
+  readonly selectionEnd: number | null;
   select(): void;
   getBoundingClientRect(): { readonly width: number; readonly height: number };
   dispatchEvent(event: PageEvent): boolean;
@@ -239,9 +242,9 @@ export type FillInput = PageInputElement;
  * embedded frame's. Focus inside an embedded frame leaves the frame's
  * element focused here, which is no input.
  *
- * Answers the field once the value is in it; why not when nothing was typed;
- * `missed` when the editing answered but the field does not hold more than
- * before.
+ * Answers the field once the value is in it, exactly as typed; why not when
+ * nothing was typed; `missed` when the field took it otherwise, after it is
+ * put back as it was.
  */
 export const typeLogin = (
   field: string,
@@ -263,9 +266,18 @@ export const typeLogin = (
   const box = element.getBoundingClientRect();
   if (box.width < 1 || box.height < 1 || getComputedStyle(element).visibility !== "visible")
     return "field";
-  const before = element.value.length;
+  const before = element.value;
+  const start = element.selectionStart ?? before.length;
+  const end = element.selectionEnd ?? before.length;
+  const expected = before.slice(0, start) + value + before.slice(end);
   if (!document.execCommand("insertText", false, value)) return "field";
-  return element.isConnected && element.value.length > before ? element : "missed";
+  if (element.isConnected && element.value === expected) return element;
+  // The field took the value otherwise than typed (a `maxlength` cut it, or
+  // the page rewrote it): what it holds now goes, so no part of a value is
+  // left behind or submitted.
+  element.value = before;
+  element.dispatchEvent(new Event("input", { bubbles: true }));
+  return "missed";
 };
 
 /** Whether the field left its page or the page emptied it itself. */

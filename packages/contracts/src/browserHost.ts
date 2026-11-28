@@ -654,8 +654,10 @@ export const BrowserHostRpcs = RpcGroup.make(
   /**
    * Deletes what the shared sign-ins' store keeps for these origins, or for
    * every origin, besides cookies: `localStorage`, IndexedDB, cache storage,
-   * service workers and the rest of their site data. For signing out: a
-   * host with `storage` takes it. The host reports none of it back.
+   * service workers and the rest of their site data. Each open tab of them
+   * loses its `sessionStorage` too, and a tab whose page is of one of them
+   * loads again, so no page keeps a sign-in in its memory. For signing out:
+   * a host with `storage` takes it. The host reports none of it back.
    */
   Rpc.make("storage.clear", {
     payload: {

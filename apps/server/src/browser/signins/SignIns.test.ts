@@ -305,6 +305,69 @@ it.layer(NodeServices.layer)("the shared sign-ins", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("a host that was away has everything its signed-out sites stored cleared", () =>
+    Effect.gen(function* () {
+      const signIns = yield* signInsIn();
+      const a = yield* host(EVENTS, "store-a-0000000000");
+      const onA = yield* attach(signIns, a);
+      yield* visits(onA, "https://x.test/");
+      yield* siteKeeps(a, onA, stored("https://x.test", "t1"));
+      yield* onA.detach;
+
+      // Meanwhile its site keeps more than the jar syncs.
+      yield* a.siteStorage({ ...stored("https://x.test", "t2"), indexedDb: [] });
+      yield* signIns.signOutSite("x.test");
+      yield* attach(signIns, a);
+      const origins = yield* Effect.map(a.storage, (kept) => kept.map(({ origin }) => origin));
+      assert.notInclude(origins, "https://x.test");
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("a report a host queued before a slow sign-out does not sign back in", () =>
+    Effect.gen(function* () {
+      const signIns = yield* signInsIn();
+      const a = yield* host(EVENTS, "store-a-0000000000");
+      const b = yield* host(EVENTS, "store-b-0000000000");
+      const onA = yield* attach(signIns, a);
+      yield* attach(signIns, b);
+      yield* visits(onA, "https://x.test/");
+      yield* siteSets(a, onA, cookie("sid", "one", "x.test"));
+
+      const release = yield* a.holdNext("storage.clear");
+      const signingOut = yield* Effect.forkChild(signIns.signOutSite("x.test"));
+      yield* settle;
+      yield* TestClock.adjust("11 seconds");
+      yield* release;
+      yield* Fiber.join(signingOut);
+      // The report the host sent before the clear, delivered only now.
+      yield* onA.event({
+        type: "cookies.changed",
+        changes: { set: [cookie("sid", "one", "x.test")], removed: [] },
+      });
+      assert.deepStrictEqual(yield* held(b), []);
+      assert.deepStrictEqual(yield* listed(signIns), []);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("a host's report from before the server's write to it does not undo the write", () =>
+    Effect.gen(function* () {
+      const signIns = yield* signInsIn();
+      const a = yield* host(EVENTS, "store-a-0000000000");
+      const b = yield* host(EVENTS, "store-b-0000000000");
+      const onA = yield* attach(signIns, a);
+      const onB = yield* attach(signIns, b);
+      yield* a.siteCookies({ set: [cookie("sid", "from-a", "x.test")], removed: [] });
+      yield* siteSets(b, onB, cookie("sid", "from-b", "x.test"));
+      // A's report of its own renewal, sent before B's reached it.
+      yield* onA.event({
+        type: "cookies.changed",
+        changes: { set: [cookie("sid", "from-a", "x.test")], removed: [] },
+      });
+      assert.deepStrictEqual(yield* held(a), ["sid=from-b"]);
+      assert.deepStrictEqual(yield* held(b), ["sid=from-b"]);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("a sign-out goes on to its end when whoever asked for it stops waiting", () =>
     Effect.gen(function* () {
       const signIns = yield* signInsIn();
@@ -469,6 +532,10 @@ it.layer(NodeServices.layer)("the shared sign-ins", (it) => {
       assert.deepStrictEqual(yield* held(a), []);
       assert.deepStrictEqual(yield* tokens(a), []);
       assert.strictEqual((yield* sitesOf(signIns)).status, "ready");
+      // The engine's sign-ins of before, still to move, are from before too.
+      yield* signIns.bringIn({ cookies: [cookie("sid", "old", "x.test")], origins: [], sites: [] });
+      assert.deepStrictEqual(yield* held(a), []);
+      assert.strictEqual(yield* signIns.toBringIn, "done");
     }).pipe(Effect.scoped),
   );
 

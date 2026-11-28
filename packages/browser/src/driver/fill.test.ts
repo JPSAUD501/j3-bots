@@ -54,6 +54,8 @@ const PAGES: Readonly<Record<string, string>> = {
       };
       frame.addEventListener("load", flip);
     </script>`,
+  [`${SITE}/short`]: `<title>Sign in</title>
+    <form method="post" action="/home"><input id="pw" name="pw" type="password" maxlength="4"></form>`,
   [`${OTHER}/catch`]: `<input id="inner" type="password">
     <script>addEventListener("focus", () => document.querySelector("#inner").focus());</script>`,
   [`${SITE}/frame`]: `<input id="inner" type="password">`,
@@ -251,6 +253,21 @@ describe.skipIf(executablePath === undefined)("fill", () => {
         }
         for (const selector of ["#comment", "#search", "#user", "#hidden"])
           assert.strictEqual(yield* valueOf(page, selector), "");
+      }).pipe(Effect.scoped),
+    60_000,
+  );
+
+  it.live(
+    "leaves nothing of a password the field cut short, and submits nothing",
+    () =>
+      Effect.gen(function* () {
+        const { driver, page, posted } = yield* driven;
+        yield* open(page, "/short");
+        yield* Effect.promise(() => page.focus("#pw"));
+        const error = yield* Effect.flip(driver.fill(fillOf("password", `${SITE}/short`)));
+        assert.strictEqual(error.reason, "page");
+        assert.strictEqual(yield* valueOf(page, "#pw"), "");
+        assert.deepStrictEqual(posted, []);
       }).pipe(Effect.scoped),
     60_000,
   );

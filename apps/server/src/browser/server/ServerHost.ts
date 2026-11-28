@@ -437,13 +437,18 @@ export const launchServerHost = (input: {
 
     /**
      * Runs `use` in a page of `origin` that no site's code runs in: every
-     * request it makes is answered with an empty page. What it reads and
-     * writes is the origin's own storage.
+     * request it makes is answered with an empty page, past any service
+     * worker of the origin, which would otherwise answer it before the route
+     * (**Assumed**: `Network.setBypassServiceWorker` covers the navigation).
+     * What it reads and writes is the origin's own storage.
      */
     const inProbe = <A>(origin: string, use: (page: Page) => Promise<A>) =>
       send(async () => {
         const page = await context.newPage();
         try {
+          const cdp = await context.newCDPSession(page);
+          await cdp.send("Network.enable");
+          await cdp.send("Network.setBypassServiceWorker", { bypass: true });
           await page.route("**/*", (route) =>
             route.fulfill({ status: 200, contentType: "text/html", body: "<!doctype html>" }),
           );
@@ -483,24 +488,45 @@ export const launchServerHost = (input: {
      * Deletes the site data of `clear`'s origins, or of every origin a tab
      * showed, besides cookies, from a page of the context: CDP's `Storage`
      * clears the storage of the target's own browser context (**Assumed**).
+     * Then each open tab of those origins loses its `sessionStorage`, which
+     * CDP does not clear, in every frame of them, and a tab whose page is of
+     * one loads again, so no page keeps a sign-in in its memory either.
      */
     const clearStorage = (clear: PageHostPayload<"storage.clear">["clear"]) => {
       const origins = "all" in clear ? [...shownOrigins] : clear.origins;
-      return origins.length === 0
-        ? Effect.void
-        : send(async () => {
-            const page = await context.newPage();
-            try {
-              const cdp = await context.newCDPSession(page);
-              for (const origin of origins)
-                await cdp.send("Storage.clearDataForOrigin", {
-                  origin,
-                  storageTypes: CLEARED_STORAGE,
-                });
-            } finally {
-              await page.close();
-            }
-          });
+      const ofThem = (url: string) => {
+        const origin = webOriginOf(url);
+        return origin !== undefined && ("all" in clear || clear.origins.includes(origin));
+      };
+      const cleared =
+        origins.length === 0
+          ? Effect.void
+          : send(async () => {
+              const page = await context.newPage();
+              try {
+                const cdp = await context.newCDPSession(page);
+                for (const origin of origins)
+                  await cdp.send("Storage.clearDataForOrigin", {
+                    origin,
+                    storageTypes: CLEARED_STORAGE,
+                  });
+              } finally {
+                await page.close();
+              }
+            });
+      const signedOutTabs = Effect.forEach(
+        [...tabs.values()],
+        ({ driver }) =>
+          send(async () => {
+            const { page } = driver;
+            for (const frame of page.frames())
+              if (ofThem(frame.url()))
+                await frame.evaluate(() => sessionStorage.clear()).catch(() => undefined);
+            if (ofThem(page.url())) await page.reload({ waitUntil: "commit" });
+          }),
+        { discard: true },
+      );
+      return Effect.andThen(cleared, signedOutTabs);
     };
 
     /**

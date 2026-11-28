@@ -208,6 +208,12 @@ interface Attached {
   readonly seen: Set<string>;
   /** Sites signed out of lately, or every site, and until when its reports of them are checked. */
   readonly fences: Map<BrowserSite, number>;
+  /**
+   * Cookies the server wrote to it lately, and until when its reports of
+   * them are checked: a report it made before the write, delivered after,
+   * would take back what it no longer holds.
+   */
+  readonly written: Map<Digest, number>;
   /** A call to it failed: it is synced no more until it is reconciled again. */
   broken: boolean;
   /** Whether it is to be reconciled again, after a wait. */
@@ -446,12 +452,17 @@ export const makeSignIns = Effect.fn("SignIns.make")(function* (
           if (!synced(a) || a.baseline === undefined) return;
           const written = yield* hostCall("take cookies", a.host.writeCookies(changes));
           if (Option.isNone(written)) return yield* broke(a);
-          for (const cookie of changes.set)
-            a.baseline.cookies.set(
-              open.digests.cookieId(keyOfCookie(cookie)),
-              open.digests.cookieDigest(cookie),
-            );
-          for (const key of changes.removed) a.baseline.cookies.delete(open.digests.cookieId(key));
+          const until = (yield* Clock.currentTimeMillis) + FENCE_MS;
+          for (const cookie of changes.set) {
+            const id = open.digests.cookieId(keyOfCookie(cookie));
+            a.baseline.cookies.set(id, open.digests.cookieDigest(cookie));
+            a.written.set(id, until);
+          }
+          for (const key of changes.removed) {
+            const id = open.digests.cookieId(key);
+            a.baseline.cookies.delete(id);
+            a.written.set(id, until);
+          }
           yield* saveBaseline(open, a);
         }),
       { discard: true },
@@ -542,6 +553,31 @@ export const makeSignIns = Effect.fn("SignIns.make")(function* (
     return true;
   });
 
+  /**
+   * Clears on host `a` the site data of every sign-out after `since` that
+   * it missed: all of it after a sign-out of all sites, else each origin
+   * the jar keeps, or a tab of the host shows, of a site signed out of.
+   * False when a call failed, and `a` broke.
+   */
+  const clearMissed = (open: Open, a: Attached, since: number) =>
+    Effect.suspend(() => {
+      const revoked = (sites: ReadonlyArray<BrowserSite>) => revokedSince(open, since, sites);
+      if (revoked([])) return clearHost(open, a, () => true, { all: true });
+      const origins = new Set<string>();
+      const candidates = [
+        ...[...open.contents.origins.values()].map((kept) => kept.storage.origin),
+        ...[...a.tabs.values()].flatMap((tab) => (tab.private ? [] : [tab.url])),
+      ];
+      for (const candidate of candidates) {
+        const origin = originOf(candidate);
+        const site = origin === undefined ? undefined : siteOfOrigin(origin);
+        if (origin !== undefined && site !== undefined && revoked([site])) origins.add(origin);
+      }
+      return origins.size === 0
+        ? Effect.succeed(true)
+        : clearHost(open, a, revoked, { origins: [...origins] });
+    });
+
   /** `a`'s origins are all reconciled: every sign-out up to its reconcile reached it. */
   const agree = (open: Open, a: Attached) =>
     Effect.suspend(() => {
@@ -577,6 +613,10 @@ export const makeSignIns = Effect.fn("SignIns.make")(function* (
       now - contents.clearedAt < KEPT_MS
     )
       if (!(yield* clearHost(open, a, () => true, { all: true }))) return;
+    // A store the jar knows, that missed sign-outs while it was away or a
+    // clear failed: what those sites stored goes before anything of the
+    // host's is taken.
+    if (stored !== undefined && !(yield* clearMissed(open, a, stored.version))) return;
     let cookies = new Map(stored?.cookies ?? []);
     if (a.cookies) {
       const read = yield* hostCall("give its cookies", a.host.readCookies);
@@ -725,10 +765,19 @@ export const makeSignIns = Effect.fn("SignIns.make")(function* (
       }
     });
 
-  /** Whether a report of host `a` touches a site signed out of lately. */
-  const fenced = (a: Attached, sites: ReadonlyArray<BrowserSite>, now: number) => {
+  /**
+   * Whether a report of host `a` may be from before what the server did to
+   * it lately: it touches a site signed out of, or a cookie written to it.
+   */
+  const fenced = (a: Attached, reported: BrowserCookieChanges, digests: Digests, now: number) => {
     for (const [site, until] of a.fences) if (until <= now) a.fences.delete(site);
-    return a.fences.has(ALL_SITES) || sites.some((site) => a.fences.has(site));
+    for (const [id, until] of a.written) if (until <= now) a.written.delete(id);
+    const ids = [...reported.set.map(keyOfCookie), ...reported.removed].map(digests.cookieId);
+    return (
+      a.fences.has(ALL_SITES) ||
+      sitesOfChanges(reported).some((site) => a.fences.has(site)) ||
+      ids.some((id) => a.written.has(id))
+    );
   };
 
   /** Cookies host `a` changed, as it reported them or a read found. */
@@ -740,9 +789,9 @@ export const makeSignIns = Effect.fn("SignIns.make")(function* (
     if (open === undefined || !synced(a) || a.baseline === undefined) return;
     const now = yield* Clock.currentTimeMillis;
     let changes = reported;
-    if (fenced(a, sitesOfChanges(reported), now)) {
-      // The report may be from before the sign-out reached the host: what
-      // the host holds now says.
+    if (fenced(a, reported, open.digests, now)) {
+      // The report may be from before the sign-out or the write reached
+      // the host: what the host holds now says.
       const read = yield* hostCall("give its cookies", a.host.readCookies);
       if (Option.isNone(read)) return yield* broke(a);
       changes = diffHostCookies({
@@ -865,6 +914,9 @@ export const makeSignIns = Effect.fn("SignIns.make")(function* (
         matches,
         all ? { all: true } : { origins: [...origins] },
       );
+      // A report the host queued before the clear may come only now: the
+      // fence runs from when the clear reached it.
+      a.fences.set(signout, (yield* Clock.currentTimeMillis) + FENCE_MS);
       if (!done) continue;
       if (a.agreed) a.since = Math.max(a.since, version);
       else a.signedOut = version;
@@ -897,10 +949,16 @@ export const makeSignIns = Effect.fn("SignIns.make")(function* (
       signedOut: -1,
       agreed: false,
       pending: new Set(),
-      tabs: new Map(hello.tabs.map((page) => [page.tab, { url: page.url, private: false }])),
+      tabs: new Map<BrowserTabRef, { url: string; readonly private: boolean }>([
+        ...hello.tabs.map((page) => [page.tab, { url: page.url, private: false }] as const),
+        ...(hello.privateTabs ?? []).map(
+          (page) => [page.tab, { url: page.url, private: true }] as const,
+        ),
+      ]),
       touched: new Set(),
       seen: new Set(),
       fences: new Map(),
+      written: new Map(),
       broken: false,
       retrying: false,
       failures: 0,
@@ -956,6 +1014,8 @@ export const makeSignIns = Effect.fn("SignIns.make")(function* (
             tab.url = page.url;
             return Effect.void;
           }
+          // A tab the server opened is never private: a private one opens
+          // only in the app, which reports it (`tab.opened`, the hello).
           if (tab === undefined) a.tabs.set(page.tab, { url: page.url, private: false });
           else {
             if (originOf(tab.url) !== originOf(page.url)) leaving(tab.url);
@@ -1017,6 +1077,9 @@ export const makeSignIns = Effect.fn("SignIns.make")(function* (
         digests: jar.digests,
         contents: { ...fresh.contents },
       };
+      // Recorded as a sign-out of all sites: the engine's old profile, still
+      // due to move, brings nothing of before back.
+      yield* signOutOf(ALL_SITES);
       yield* publish;
       // Hosts that attached while the jar was unreadable: nothing of theirs
       // was synced, and the reconcile of a store the jar does not know,

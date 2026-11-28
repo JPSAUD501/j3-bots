@@ -213,7 +213,12 @@ const copyNeeded = Effect.fn("profile.copyNeeded")(function* (profile: string, c
   const path = yield* Path.Path;
   for (const entry of COPIED) {
     const from = path.join(profile, ...entry.split("/"));
-    const info = yield* Effect.option(fs.stat(from));
+    // Only an entry that is not there is skipped: any other failure ends
+    // the read, before the move commits or deletes anything.
+    const info = yield* fs.stat(from).pipe(
+      Effect.asSome,
+      Effect.catchReason("PlatformError", "NotFound", () => Effect.succeedNone),
+    );
     if (Option.isNone(info)) continue;
     const to = path.join(copy, ...entry.split("/"));
     yield* fs.makeDirectory(path.dirname(to), { recursive: true, mode: 0o700 });
