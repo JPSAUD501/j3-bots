@@ -218,6 +218,9 @@ export const MAX_BROWSER_FILL_LENGTH = 10_000;
  * - `privateTabs`: the person can open a private tab on it.
  * - `nativeView`: the person sees its tabs in a view of its own, in the
  *   app, and uses them there (`person.input`, `tab.focused`).
+ * - `pointers`: its pictures of a tab (`tab.screencast`) show the bots on
+ *   the tab, as its pages draw their pointers themselves; never its
+ *   screenshots and snapshots, which are a bot's.
  */
 export const BrowserHostCapabilities = Schema.Struct({
   screencast: Schema.optionalKey(Schema.Literal(true)),
@@ -229,6 +232,7 @@ export const BrowserHostCapabilities = Schema.Struct({
   changeEvents: Schema.optionalKey(Schema.Literal(true)),
   privateTabs: Schema.optionalKey(Schema.Literal(true)),
   nativeView: Schema.optionalKey(Schema.Literal(true)),
+  pointers: Schema.optionalKey(Schema.Literal(true)),
 });
 export type BrowserHostCapabilities = typeof BrowserHostCapabilities.Type;
 

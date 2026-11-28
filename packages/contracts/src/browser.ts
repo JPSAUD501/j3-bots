@@ -51,7 +51,8 @@ export type BrowserDialog = typeof BrowserDialog.Type;
  *   for it to come back, with no new picture and taking no input, and is parked
  *   if it does not. A bot that uses it meanwhile opens it again where a new
  *   tab opens. A server before `away` never sends it, at the same protocol
- *   version.
+ *   version. `pointers` when that app's pictures of its tabs show the bots'
+ *   pointers already (its host's `pointers`), so a view draws none over them.
  * - `server`: in the server's own browser.
  * - `parked`: its host went away (the app closed, or the server's browser
  *   let an idle tab go). It keeps its address and title, and the next bot
@@ -63,6 +64,7 @@ export const BrowserTabWhere = Schema.Union([
     kind: Schema.Literal("desktop"),
     device: DeviceId,
     away: Schema.optionalKey(Schema.Literal(true)),
+    pointers: Schema.optionalKey(Schema.Literal(true)),
   }),
   Schema.Struct({ kind: Schema.Literal("server") }),
   Schema.Struct({ kind: Schema.Literal("parked") }),

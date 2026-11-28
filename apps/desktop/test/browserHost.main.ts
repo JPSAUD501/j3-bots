@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { BotId, DeviceId } from "@j3-bots/contracts";
+import { BotId, type BrowserTabRef, DeviceId } from "@j3-bots/contracts";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import * as Stream from "effect/Stream";
@@ -12,6 +12,7 @@ import { linkToServer } from "../src/browser/link.ts";
 // `J3_CHECK_SERVER`, its profile and scratch folder in `J3_CHECK_FOLDER`. A
 // tab the server opens at `/presence` is shown in a window of its own, with a
 // bot on it, as the app's page would say: its page draws the bot's pointer.
+// One at `/aside` has the bot on it too, and no window shows it.
 // As that page's title asks ("Look"), what the window shows of it goes to the
 // server at `/seen`, as the person sees it.
 
@@ -44,36 +45,39 @@ const program = Effect.gen(function* () {
       net.fetch(`${server}/seen`, { method: "POST", body: Uint8Array.from(image.toPNG()) }),
     );
   });
+  /** The tabs the bot is on. */
+  const botOn = new Set<BrowserTabRef>();
+  const withBot = (tab: BrowserTabRef) =>
+    Effect.suspend(() => {
+      botOn.add(tab);
+      return browser.presence(
+        [...botOn].map((tab) => ({
+          tab,
+          bots: [
+            {
+              id: BotId.make("bot-check"),
+              profile: { name: "Pointer Check", avatar: { shape: "dome", color: "cobalt" } },
+              thinking: false,
+            },
+          ],
+          held: false,
+        })),
+      );
+    });
   yield* browser.local.pipe(
-    Stream.runForEach((event) =>
-      event.type !== "changed" ||
-      event.tab.private ||
-      URL.parse(event.page.url)?.pathname !== "/presence"
-        ? Effect.void
-        : event.page.title === "Look"
-          ? look
-          : Effect.andThen(
-              Effect.sync(() =>
-                browser.show(event.tab.ref, screen, { x: 0, y: 0, width: 800, height: 600 }),
-              ),
-              browser.presence([
-                {
-                  tab: event.tab.ref,
-                  bots: [
-                    {
-                      id: BotId.make("bot-check"),
-                      profile: {
-                        name: "Pointer Check",
-                        avatar: { shape: "dome", color: "cobalt" },
-                      },
-                      thinking: false,
-                    },
-                  ],
-                  held: false,
-                },
-              ]),
-            ),
-    ),
+    Stream.runForEach((event) => {
+      if (event.type !== "changed" || event.tab.private) return Effect.void;
+      const path = URL.parse(event.page.url)?.pathname;
+      if (path === "/aside") return withBot(event.tab.ref);
+      if (path !== "/presence") return Effect.void;
+      if (event.page.title === "Look") return look;
+      return Effect.andThen(
+        Effect.sync(() =>
+          browser.show(event.tab.ref, screen, { x: 0, y: 0, width: 800, height: 600 }),
+        ),
+        withBot(event.tab.ref),
+      );
+    }),
     Effect.forkScoped,
   );
   // A private tab of the person's, which the server must never hear of.

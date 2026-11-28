@@ -7,6 +7,7 @@ import {
   BrowserTabRef,
   DeviceId,
   MAX_ATTACHMENT_SIZE,
+  type BrowserHostHello,
   type SharedBrowserTab,
 } from "@j3-bots/contracts";
 import { BROWSER_NOTES } from "@j3-bots/prompts";
@@ -44,9 +45,12 @@ const tabsWhen = (until: (tabs: ReadonlyArray<SharedBrowserTab>) => boolean) =>
   });
 
 /** A desktop app's browser for `device`, attached until the returned scope closes. */
-const desktop = (device: DeviceId) =>
+const desktop = (device: DeviceId, capabilities?: BrowserHostHello["capabilities"]) =>
   Effect.gen(function* () {
-    const host = yield* makeFakePageHost({ host: { kind: "desktop", device } });
+    const host = yield* makeFakePageHost({
+      host: { kind: "desktop", device },
+      ...(capabilities === undefined ? {} : { capabilities }),
+    });
     const attached = yield* attach(host);
     // The server hears the host's events from here on.
     while (!(yield* host.calls).some((call) => call.call === "host.events")) {
@@ -112,6 +116,19 @@ it.effect("keeps a desktop's tabs where they ran when it comes back within the g
     assert.deepStrictEqual(
       tabs.map((tab) => tab.where),
       [{ kind: "desktop", device: laptop }],
+    );
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("says a desktop's tabs' pictures show the bots' pointers when its app draws them", () =>
+  Effect.gen(function* () {
+    const bot = yield* createBot("Ana");
+    yield* desktop(laptop, { screencast: true, input: true, pointers: true });
+    const ref = yield* open(bot.id, "https://news.example.test/");
+    const tabs = yield* tabsWhen((all) => all.some((tab) => tab.ref === ref));
+    assert.deepStrictEqual(
+      tabs.map((tab) => tab.where),
+      [{ kind: "desktop", device: laptop, pointers: true }],
     );
   }).pipe(Effect.provide(TestDomain.layer)),
 );

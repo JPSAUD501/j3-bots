@@ -11,8 +11,9 @@ import type { WebContents } from "electron";
 
 // The bots' pointers in the pages of the desktop's browser (docs/architecture/browser.md,
 // "Presence in the page"): the web client's drawing (apps/web/src/browser/desktop/presence),
-// run in a world of the tab's page that is neither the page's nor Electron's, while the
-// tab is on the person's screen and a bot is on it.
+// run in a world of the tab's page that is neither the page's nor Electron's, while a bot
+// is on the tab and the tab is on the person's screen or watched: a viewer's picture of
+// the page shows the pointers as the person here sees them.
 
 /** The page's world is 0 and Electron's own is 999: the drawing's is apart from both. */
 const PRESENCE_WORLD = 1_710;
@@ -51,6 +52,8 @@ export interface TabDrawing {
   readonly onTab: (presence: Presence | null) => Effect.Effect<void>;
   /** Whether the tab is on the person's screen. */
   readonly shown: (shown: boolean) => Effect.Effect<void>;
+  /** Drawn for as long as the scope lives, shown or not: a viewer watches the page's pictures. */
+  readonly watched: Effect.Effect<void, never, Scope.Scope>;
   readonly point: (pointer: PagePointer) => Effect.Effect<void>;
   /** Nothing drawn for as long as the scope lives: a bot reads the page, never its own pointer. */
   readonly hidden: Effect.Effect<void, never, Scope.Scope>;
@@ -65,8 +68,8 @@ const keyOf = (call: PresenceCall) => JSON.stringify(encodeCall(call));
 /**
  * The drawing of `contents`' page, from `script`, the drawing's bundle:
  * null where the app carries none, and then nothing is drawn. Nothing runs
- * in a page until a bot is on its tab while it shows. What it waits on in the
- * page lives in `scope`, the tab's.
+ * in a page until a bot is on its tab while it shows or is watched. What it
+ * waits on in the page lives in `scope`, the tab's.
  */
 export const makeTabDrawing = Effect.fn("makeTabDrawing")(function* (
   contents: WebContents,
@@ -76,6 +79,7 @@ export const makeTabDrawing = Effect.fn("makeTabDrawing")(function* (
   const turns = yield* Semaphore.make(1);
   let presence: Presence | null = null;
   let shown = false;
+  let watchers = 0;
   let capturing = 0;
   let sequence = 0;
   /** Where the tab's bot last pointed on this document: a drawing begun later shows it there. */
@@ -141,7 +145,7 @@ export const makeTabDrawing = Effect.fn("makeTabDrawing")(function* (
   /** Tells the page what it should draw now, if that changed. */
   const sync: Effect.Effect<void> = Effect.gen(function* () {
     const wanted: PresenceCall =
-      presence !== null && presence.bots.length > 0 && shown
+      presence !== null && presence.bots.length > 0 && (shown || watchers > 0)
         ? { _tag: "draw", bots: presence.bots, held: presence.held, hidden: capturing > 0 }
         : NOTHING;
     const key = keyOf(wanted);
@@ -187,6 +191,20 @@ export const makeTabDrawing = Effect.fn("makeTabDrawing")(function* (
           if (drawing() && !(yield* send(now))) drawn = null;
         }),
       ),
+    watched: Effect.acquireRelease(
+      inTurn(() => {
+        watchers += 1;
+      }),
+      () =>
+        Effect.asVoid(
+          Effect.forkIn(
+            inTurn(() => {
+              watchers -= 1;
+            }),
+            scope,
+          ),
+        ),
+    ),
     hidden: Effect.acquireRelease(
       inTurn(() => {
         capturing += 1;

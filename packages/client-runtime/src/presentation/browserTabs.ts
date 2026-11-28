@@ -265,6 +265,15 @@ export const tabFaces = (
 export const followedBot = (tab: ViewerTab): BotId | null => tab.acting ?? tab.onIt[0] ?? null;
 
 /**
+ * Whether the pictures of a tab running `where` show its bots' pointers
+ * already, so a view draws none over them: a desktop app whose pages draw
+ * them while they are watched says so (`pointers`). An older app's, and a
+ * server's tab's, are of the page alone.
+ */
+export const pointersInPicture = (where: BrowserTabWhere | null): boolean =>
+  where?.kind === "desktop" && where.pointers === true;
+
+/**
  * The tab a bot's live card and the conversation's "Browsing" line show:
  * the one it acts on, else the most recent it is on, else none.
  */

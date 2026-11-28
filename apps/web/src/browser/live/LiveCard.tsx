@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { BrowserViewHandle } from "@j3-bots/client-runtime";
-import { siteOf, tabFaces, type ViewerTab } from "@j3-bots/client-runtime/presentation";
+import {
+  pointersInPicture,
+  siteOf,
+  tabFaces,
+  type ViewerTab,
+} from "@j3-bots/client-runtime/presentation";
 import type { BrowserTabRef } from "@j3-bots/contracts";
 import { AppWindowIcon } from "lucide-react";
 import { useEffect, useEffectEvent, useState, useSyncExternalStore } from "react";
@@ -216,7 +221,7 @@ function Picture({ tab, live }: { readonly tab: ViewerTab; readonly live: boolea
       {last !== null && (
         <img src={last.url} alt="" className="absolute inset-0 size-full object-contain" />
       )}
-      {view !== null && drawn !== null && page !== null && (
+      {view !== null && drawn !== null && page !== null && !pointersInPicture(tab.where) && (
         <span
           className="pointer-events-none absolute"
           style={{ left: drawn.left, top: drawn.top, width: drawn.width, height: drawn.height }}

@@ -99,7 +99,8 @@ const webOrigin = (origin: string): string | null => {
 
 /**
  * The sign-ins of `session`, for as long as the scope lives, through a
- * probe kept in `shelf`, a window that is never shown.
+ * probe kept in `shelf`, the window of the tabs no other window shows,
+ * hidden there for good.
  */
 export const makeSignIns = (
   session: Session,

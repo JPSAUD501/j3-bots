@@ -1,6 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// @effect-diagnostics nodeBuiltinImport:off -- the fake site is a plain node:http server.
-import * as NodeHttp from "node:http";
 import { CommandId, ServerOrigin, type SharedBrowserTab } from "@j3-bots/contracts";
 import { BROWSER_NOTES } from "@j3-bots/prompts";
 import * as Server from "@j3-bots/server/testing";
@@ -12,7 +10,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type { ElectronApplication } from "playwright-core";
-import { launch, linkTo, mainWindow, STEP } from "./electron.ts";
+import { fakeSite, launch, linkTo, mainWindow, pairFromLink, STEP } from "./electron.ts";
 
 // A bot at work in a tab the desktop app hosts, driven by the server as a
 // bot's tools drive it: its typing and clicking are the bot's, never the
@@ -24,28 +22,6 @@ import { launch, linkTo, mainWindow, STEP } from "./electron.ts";
 const FORM_PAGE = `<!doctype html><html><head><title>Fake Form</title></head>
 <body><input id="field" aria-label="Field"><button id="press"
 onclick="document.title = 'Pressed'">Press</button></body></html>`;
-
-/** A fake site on the loopback; answers its origin. Closed with the scope. */
-const fakeSite = Effect.acquireRelease(
-  Effect.callback<NodeHttp.Server>((resume) => {
-    const server = NodeHttp.createServer((_request, response) =>
-      response.writeHead(200, { "content-type": "text/html" }).end(FORM_PAGE),
-    );
-    server.once("error", (cause) => resume(Effect.die(cause)));
-    server.listen(0, "127.0.0.1", () => resume(Effect.succeed(server)));
-  }),
-  (server) =>
-    Effect.callback<void>((resume) => {
-      server.close(() => resume(Effect.void));
-    }),
-).pipe(
-  Effect.flatMap((server) => {
-    const address = server.address();
-    return address === null || typeof address === "string"
-      ? Effect.die("not an IP listener")
-      : Effect.succeed(`http://127.0.0.1:${address.port}`);
-  }),
-);
 
 /** The page of the view showing `url`, given the person's own input: a click, or a key. */
 const personUses = (app: ElectronApplication, url: string, input: "click" | "key") =>
@@ -92,7 +68,7 @@ it.layer(Layer.mergeAll(Server.layer(Layer.empty), NodeServices.layer), {
         const fs = yield* FileSystem.FileSystem;
         const profile = yield* fs.makeTempDirectoryScoped({ prefix: "j3-desktop-typing-" });
         const server = yield* Schema.decodeEffect(ServerOrigin)(origin.origin);
-        const site = yield* fakeSite;
+        const site = yield* fakeSite(FORM_PAGE);
         const browser = yield* Server.Browser;
         /** The tab at `url` as the server lists it, once `done` takes it. */
         const listed = (url: string, done: (tab: SharedBrowserTab) => boolean) =>
@@ -128,11 +104,8 @@ it.layer(Layer.mergeAll(Server.layer(Layer.empty), NodeServices.layer), {
           }),
         );
         // The person opens the fake site in the browser beside the bot's conversation.
+        yield* pairFromLink(page);
         yield* Effect.promise(async () => {
-          await page.getByText("This pairing link is for").waitFor({ timeout: STEP });
-          await page.getByRole("button", { name: "Continue" }).click();
-          await page.getByLabel("Pairing code").waitFor({ timeout: STEP });
-          await page.getByRole("button", { name: "Pair", exact: true }).click();
           await page.getByText(bot.profile.name).first().click({ timeout: STEP });
           await page.getByRole("button", { name: "Open browser" }).click({ timeout: STEP });
         });
@@ -166,19 +139,32 @@ it.layer(Layer.mergeAll(Server.layer(Layer.empty), NodeServices.layer), {
         const clicked = yield* listed(formUrl, (tab) => tab.heldBy?.kind === "person");
         yield* refusedForPerson(clicked);
 
-        // In a new tab, the bot types, and the person's own key holds it for them.
+        // In a new tab, the bot types, and the person's own key holds it for them. The
+        // address is typed once the new tab is in front: typed before, it would be the
+        // form's, or dropped as the new tab comes.
         yield* Effect.promise(async () => {
           await page
             .getByRole("combobox", { name: "Search or type an address" })
             .first()
             .click({ timeout: STEP });
           await page.keyboard.press("Control+t");
+          await page
+            .getByRole("tab", { name: "New tab", selected: true })
+            .first()
+            .waitFor({ timeout: STEP });
         });
         const keysUrl = `${site}/keys`;
         yield* goTo(keysUrl);
+        // The person's address holds the new tab for them, until the server publishes that
+        // their hold ended, 10 s on (`BROWSER_PERSON_HOLD_MS`).
+        const addressed = yield* listed(
+          keysUrl,
+          (tab) => tab.where.kind === "desktop" && tab.heldBy?.kind === "person",
+        );
+        assert.notStrictEqual(addressed.ref, form.ref);
         const keys = yield* listed(
           keysUrl,
-          (tab) => tab.where.kind === "desktop" && tab.heldBy === null,
+          (tab) => tab.ref === addressed.ref && tab.heldBy === null,
         );
         yield* browser.tools.act(bot.id, keys.ref, {
           action: "type",

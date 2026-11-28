@@ -97,8 +97,10 @@ export interface DesktopBrowser {
   readonly show: (ref: BrowserTabRef, window: BaseWindow, bounds: Rectangle) => void;
   /** Hides the tab's view where it is: a hidden view keeps its page, and paints when watched. */
   readonly hide: (ref: BrowserTabRef) => void;
-  /** Moves every tab `window` holds to the hidden shelf, before the window goes. */
+  /** Moves every tab `window` holds aside, hidden, before the window goes or hides. */
   readonly evacuate: (window: BaseWindow) => void;
+  /** Takes the tabs the shelf keeps into `window`, back on the person's screen, where the shelf stays hidden. */
+  readonly unshelve: (window: BaseWindow) => void;
   /** The person used the tab from the app's own controls: its address, back or forward. */
   readonly personUsed: (ref: BrowserTabRef) => Effect.Effect<void>;
   /** Who is on the tabs, from the main window's page: each tab on screen shows their pointers in its page. */
@@ -143,8 +145,9 @@ const SESSION_CLEAR_MS = 2_000;
 const randomId = (bytes = 16) =>
   Buffer.from(SecureRandom.randomBytesUnsafe(bytes)).toString("base64url");
 /**
- * The size of a tab no window shows: its page's viewport. The shelf is
- * hidden, and a hidden window has no content size to take it from.
+ * The size of a tab no window shows: its page's viewport. A view aside
+ * takes its size from its own bounds, not from the window it waits in: the
+ * shelf is a single pixel.
  */
 const SHELF_SIZE = { width: 1280, height: 800 };
 
@@ -264,6 +267,14 @@ export const makeDesktopBrowser = (options: {
    * there, and is gone.
    */
   readonly handedOver?: (item: DownloadItem, file: string | null) => void;
+  /**
+   * The app's windows on the person's screen, where no window can be on
+   * screen out of their sight: on Wayland, the compositor places every
+   * window and lists it. Given, the shelf stays hidden, and the tabs no
+   * window shows wait hidden in one of these instead, where a hidden view
+   * paints while it is watched or driven. Left out, the shelf stays shown.
+   */
+  readonly onScreen?: () => ReadonlyArray<BaseWindow>;
 }): Effect.Effect<DesktopBrowser, BrowserHostError, Scope.Scope> =>
   Effect.gen(function* () {
     const hostScope = yield* Effect.scope;
@@ -276,22 +287,36 @@ export const makeDesktopBrowser = (options: {
     const shared = electronSession.fromPartition(BROWSER_PARTITION);
     prepareSession(shared, identity);
 
-    // The window tabs no other window shows live in, hidden: a tab in it
-    // still paints while it is watched or driven.
+    // The window tabs no other window shows live in. It stays shown, as a
+    // single see-through pixel out of sight that takes no input: a page
+    // whose renderer begins while its window is hidden never paints, though
+    // it is watched (verified on Linux, Electron 44), as a new tab's page and
+    // one a navigation moves to another site do. A tab in it paints while it
+    // is watched or driven. Where it could not be out of sight (`onScreen`),
+    // it stays hidden, and keeps the tabs only while no window is on screen.
     const shelf = yield* Effect.acquireRelease(
       Effect.sync(() => {
         const window = new BaseWindow({
           show: false,
           x: -32_000,
           y: -32_000,
-          ...SHELF_SIZE,
-          skipTaskbar: true,
+          width: 1,
+          height: 1,
+          frame: false,
+          transparent: true,
+          hasShadow: false,
+          resizable: false,
+          movable: false,
+          minimizable: false,
+          maximizable: false,
+          fullscreenable: false,
           focusable: false,
+          skipTaskbar: true,
+          hiddenInMissionControl: true,
         });
-        // Shown once, out of sight: a window never shown draws nothing at all,
-        // while one hidden after it was shown paints when asked (verified on Electron 44).
-        window.showInactive();
-        window.hide();
+        window.excludedFromShownWindowsMenu = true;
+        window.setIgnoreMouseEvents(true);
+        if (options.onScreen === undefined) window.showInactive();
         return window;
       }),
       (window) => Effect.sync(() => window.destroy()),
@@ -346,6 +371,15 @@ export const makeDesktopBrowser = (options: {
       if (was !== undefined && !was.isDestroyed()) was.contentView.removeChildView(view);
       window.contentView.addChildView(view);
       homes.set(view, window);
+    };
+    /** Where a tab no window shows waits: a window on screen other than `leaving`, else the shelf. */
+    const aside = (leaving?: BaseWindow) =>
+      options.onScreen?.().find((window) => window !== leaving && !window.isDestroyed()) ?? shelf;
+    /** Moves `view` aside, hidden, at its own size, so its page keeps its viewport. */
+    const park = (view: WebContentsView, leaving?: BaseWindow) => {
+      view.setVisible(false);
+      view.setBounds({ x: 0, y: 0, ...SHELF_SIZE });
+      moveTo(view, aside(leaving));
     };
     /** The drivers of the tabs the server knows of. */
     const drivers = new Map<BrowserTabRef, DesktopTab["driver"]>();
@@ -605,7 +639,7 @@ export const makeDesktopBrowser = (options: {
     // -----------------------------------------------------------------------
     // Tabs
 
-    /** A new tab's view, hidden in the shelf at the shelf's size, so its page has a viewport. */
+    /** A new tab's view, hidden aside at its own size, so its page has a viewport. */
     const viewFor = (session: Session, adopted?: WebContents) => {
       const view = new WebContentsView({
         ...(adopted === undefined ? {} : { webContents: adopted }),
@@ -617,9 +651,7 @@ export const makeDesktopBrowser = (options: {
           webviewTag: false,
         },
       });
-      view.setVisible(false);
-      view.setBounds({ x: 0, y: 0, ...SHELF_SIZE });
-      moveTo(view, shelf);
+      park(view);
       return view;
     };
 
@@ -853,6 +885,7 @@ export const makeDesktopBrowser = (options: {
             changeEvents: true,
             privateTabs: true,
             nativeView: true,
+            pointers: true,
           },
           ...(cookieStore === undefined ? {} : { cookieStore }),
           browserRun,
@@ -955,8 +988,8 @@ export const makeDesktopBrowser = (options: {
             // Painting for as long as someone watches, though the tab is hidden.
             const entry = entries.get(input.tab);
             if (entry?.reported === true) yield* entry.tab.paint;
-            // A viewer draws the bots' pointers over the picture itself.
-            if (entry !== undefined) yield* entry.drawing.hidden;
+            // The page draws the bots' pointers while it is watched, as the person here sees them.
+            if (entry !== undefined) yield* entry.drawing.watched;
             return tabCalls.screencast(input);
           }),
         ),
@@ -1105,12 +1138,14 @@ export const makeDesktopBrowser = (options: {
       evacuate: (window) => {
         for (const [view, home] of homes) {
           if (home !== window) continue;
-          view.setVisible(false);
-          view.setBounds({ x: 0, y: 0, ...SHELF_SIZE });
-          moveTo(view, shelf);
+          park(view, window);
           const entry = [...entries.values()].find((entry) => entry.tab.view === view);
           if (entry !== undefined) run(entry.drawing.shown(false));
         }
+      },
+      unshelve: (window) => {
+        if (options.onScreen === undefined) return;
+        for (const [view, home] of homes) if (home === shelf) moveTo(view, window);
       },
       personUsed: (ref) =>
         Effect.suspend(() => {

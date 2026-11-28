@@ -1,6 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// @effect-diagnostics nodeBuiltinImport:off -- the fake site is a plain node:http server.
-import * as NodeHttp from "node:http";
 import { CommandId, ServerOrigin } from "@j3-bots/contracts";
 import * as Server from "@j3-bots/server/testing";
 import { assert, it } from "@effect/vitest";
@@ -11,7 +9,7 @@ import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type { ElectronApplication, Page } from "playwright-core";
-import { launch, linkTo, mainWindow, STEP } from "./electron.ts";
+import { fakeSite, launch, linkTo, mainWindow, pairFromLink, STEP } from "./electron.ts";
 
 // The development build's own browser, as the person uses it: from a bot's
 // conversation the globe opens it beside the conversation, an address typed
@@ -24,27 +22,6 @@ import { launch, linkTo, mainWindow, STEP } from "./electron.ts";
 
 const SITE_PAGE = `<!doctype html><html><head><title>Fake Shop</title></head>
 <body><h1>Fake Shop</h1><p>needle one</p><p>needle two</p><p>needle three</p></body></html>`;
-
-/** A fake site on the loopback; answers its origin. Closed with the scope. */
-const fakeSite = Effect.acquireRelease(
-  Effect.callback<NodeHttp.Server>((resume) => {
-    const server = NodeHttp.createServer((_request, response) =>
-      response.writeHead(200, { "content-type": "text/html" }).end(SITE_PAGE),
-    );
-    server.listen(0, "127.0.0.1", () => resume(Effect.succeed(server)));
-  }),
-  (server) =>
-    Effect.callback<void>((resume) => {
-      server.close(() => resume(Effect.void));
-    }),
-).pipe(
-  Effect.flatMap((server) => {
-    const address = server.address();
-    return address === null || typeof address === "string"
-      ? Effect.die("not an IP listener")
-      : Effect.succeed(`http://127.0.0.1:${address.port}`);
-  }),
-);
 
 /** Where the views showing `site`'s pages are, by the path of the window holding each: none for the shelf. */
 const viewsOf = (app: ElectronApplication, site: string) =>
@@ -99,7 +76,7 @@ it.layer(Layer.mergeAll(Server.layer(Layer.empty), NodeServices.layer), {
         const fs = yield* FileSystem.FileSystem;
         const profile = yield* fs.makeTempDirectoryScoped({ prefix: "j3-desktop-browser-" });
         const server = yield* Schema.decodeEffect(ServerOrigin)(origin.origin);
-        const site = yield* fakeSite;
+        const site = yield* fakeSite(SITE_PAGE);
 
         const app = yield* launch(profile, [linkTo({ _tag: "pair", server, code })]);
         const page = yield* mainWindow(app);
@@ -126,11 +103,8 @@ it.layer(Layer.mergeAll(Server.layer(Layer.empty), NodeServices.layer), {
             ),
           );
 
+        yield* pairFromLink(page);
         yield* Effect.promise(async () => {
-          await page.getByText("This pairing link is for").waitFor({ timeout: STEP });
-          await page.getByRole("button", { name: "Continue" }).click();
-          await page.getByLabel("Pairing code").waitFor({ timeout: STEP });
-          await page.getByRole("button", { name: "Pair", exact: true }).click();
           await page.getByText(bot.profile.name).first().click({ timeout: STEP });
           // The globe opens the browser beside the conversation, on a new tab.
           await page.getByRole("button", { name: "Open browser" }).click({ timeout: STEP });
