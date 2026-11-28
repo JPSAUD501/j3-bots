@@ -7,13 +7,16 @@ import { useI18n } from "../../app/context";
 import { Button } from "../../components/ui/button";
 import { cn } from "../../lib/cn";
 import { Faces } from "../Faces";
-import { useLastPicture } from "./pictures";
+import { useBoxOf, useStill } from "../still";
+import { TabPlaceholder } from "../TabPlaceholder";
 import { Sheet } from "./Sheet";
 import { useSideSwipe } from "./swipe";
 
 /**
- * Every tab, two to a row, as on the phone: each with its last picture, its
- * name and the faces of the bots on it. A press shows it; a swipe sideways
+ * Every tab, two to a row, as on the phone: each with the last picture of
+ * its page, or its title and site until there is one, its name and the
+ * faces of the bots on it. A still of each is taken as the list opens, one
+ * after another. A press shows it; a swipe sideways
  * or its × closes it, with Undo under the list rather than a question. New
  * opens a tab at an address. A server from before shared tabs opens and
  * closes none.
@@ -64,6 +67,7 @@ export function TabGrid({
           <TabCard
             key={tab.ref}
             tab={tab}
+            open={open}
             current={tab.ref === shown}
             canClose={canChange}
             waitsForPerson={waitsForPerson}
@@ -78,6 +82,7 @@ export function TabGrid({
 
 function TabCard({
   tab,
+  open,
   current,
   canClose,
   waitsForPerson,
@@ -85,6 +90,8 @@ function TabCard({
   onClose,
 }: {
   readonly tab: ViewerTab;
+  /** The list is open: only then are stills taken. */
+  readonly open: boolean;
   readonly current: boolean;
   readonly canClose: boolean;
   readonly waitsForPerson: ReadonlySet<BotId>;
@@ -92,7 +99,17 @@ function TabCard({
   readonly onClose: () => void;
 }) {
   const { t } = useI18n();
-  const picture = useLastPicture(tab.ref);
+  const [frame, setFrame] = useState<HTMLElement | null>(null);
+  const picture = useStill(
+    {
+      ref: tab.ref,
+      url: tab.url,
+      loading: tab.loading,
+      heldHere: tab.holder._tag === "you" || tab.holder._tag === "taken",
+    },
+    useBoxOf(frame),
+    { shown: open, refresh: false, activity: "" },
+  );
   const name = tab.title === "" ? siteOf(tab.url) || t("browser.panel.newTab") : tab.title;
   const [offset, setOffset] = useState(0);
   const swipe = useSideSwipe({
@@ -126,9 +143,15 @@ function TabCard({
           current ? "border-foreground" : "border-border",
         )}
       >
-        <span className="block aspect-[4/5] w-full bg-muted">
-          {picture !== null && (
-            <img src={picture.url} alt="" className="size-full object-cover object-top" />
+        <span ref={setFrame} className="relative block aspect-[4/5] w-full bg-muted">
+          {picture === null ? (
+            <TabPlaceholder title={tab.title} url={tab.url} />
+          ) : (
+            <img
+              src={picture.url}
+              alt=""
+              className="absolute inset-0 size-full object-cover object-top"
+            />
           )}
         </span>
         <span className="flex min-h-11 items-center gap-1.5 px-2 py-1.5">

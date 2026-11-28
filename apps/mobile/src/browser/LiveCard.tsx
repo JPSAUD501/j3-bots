@@ -122,13 +122,15 @@ function Picture({
   const cursorCame = useEffectEvent((cursor: Parameters<typeof withCursor>[1]) =>
     setCursors((now) => withCursor(now, cursor, onIt)),
   );
+  // Kept with the address the page has as the picture comes.
+  const keep = useEffectEvent((jpeg: Uint8Array) => keepPicture(tabRef, jpeg, Date.now(), address));
   useEffect(() => {
     if (view === null) return;
     const stops = [
       view.picture.subscribe(() => {
         const picture = view.picture.get();
         if (picture === null) return;
-        keepPicture(tabRef, picture.jpeg, Date.now());
+        keep(picture.jpeg);
         // A card shows only the newest picture: the next may come at once.
         view.ack(picture.sequence);
       }),
@@ -138,7 +140,7 @@ function Picture({
     return () => {
       for (const stop of stops) stop();
     };
-  }, [view, tabRef]);
+  }, [view]);
   const height =
     page === null ? CARD_HEIGHT : Math.min(CARD_HEIGHT, (width * page.height) / page.width);
   const drawn = page === null ? null : drawnRect(fitted({ width, height }, page), NO_ZOOM);

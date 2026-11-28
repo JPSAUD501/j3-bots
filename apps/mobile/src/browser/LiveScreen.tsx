@@ -633,14 +633,10 @@ function LiveBar({
       accessibilityLabel={text === "" ? t("browser.sheet.title") : text}
       accessibilityLiveRegion="polite"
       onPress={onSheet}
-      className={`min-h-11 min-w-0 flex-row items-center gap-2 ${lying ? "justify-center" : "flex-1 px-1.5"}`}
+      className={`min-h-11 min-w-0 flex-row items-center gap-2 ${lying ? "justify-center" : "flex-1 px-1 py-1"}`}
     >
       <Faces faces={faces} />
-      {!lying && (
-        <Text numberOfLines={1} className="min-w-0 flex-1 text-sm text-foreground">
-          {text}
-        </Text>
-      )}
+      {!lying && <Text className="min-w-0 flex-1 text-sm text-foreground">{text}</Text>}
     </Pressable>
   );
   const index = tabs.findIndex((tab) => tab.ref === shown);
@@ -683,7 +679,6 @@ function LiveBar({
         {button(ChevronUp, t("browser.keys.previous"), () => onField("previous"))}
         {button(ChevronDown, t("browser.keys.next"), () => onField("next"))}
         <Text
-          numberOfLines={1}
           accessibilityLiveRegion="polite"
           className="min-w-0 flex-1 px-1.5 text-sm text-muted-foreground"
         >
@@ -718,36 +713,44 @@ function LiveBar({
     );
   }
 
+  // Upright, the line reads whole on a row of its own, over the controls, wrapping rather than cut short.
+  const lined = text !== "" || faces.length > 0 || action !== null;
   return (
     <View
       {...swipe}
       style={{ paddingBottom: Math.max(insets.bottom, 8) }}
       className="border-t border-border pt-1"
     >
+      {lined && (
+        <View className="flex-row items-center gap-1 px-2">
+          {line}
+          {actionButton}
+        </View>
+      )}
       <View className="flex-row items-center gap-0.5 px-1">
         {button(ChevronDown, t("browser.live.close"), onClose)}
         {button(ChevronLeft, t("browser.live.back"), onBack, !live)}
-        {line}
-        {actionButton}
+        <View className="min-w-0 flex-1 flex-row justify-center">
+          {tabs.length > 1 && index !== -1 && (
+            <View
+              accessibilityLabel={t("browser.live.tabOf", {
+                index: String(index + 1),
+                count: String(tabs.length),
+              })}
+              className="flex-row flex-wrap justify-center gap-1.5"
+            >
+              {tabs.map((each, at) => (
+                <View
+                  key={each.ref}
+                  className={`size-1.5 rounded-pill ${at === index ? "bg-foreground" : "bg-border"}`}
+                />
+              ))}
+            </View>
+          )}
+        </View>
         {tabsButton}
         {moreButton}
       </View>
-      {tabs.length > 1 && index !== -1 && (
-        <View
-          accessibilityLabel={t("browser.live.tabOf", {
-            index: String(index + 1),
-            count: String(tabs.length),
-          })}
-          className="flex-row justify-center gap-1.5 pb-1"
-        >
-          {tabs.map((each, at) => (
-            <View
-              key={each.ref}
-              className={`size-1.5 rounded-pill ${at === index ? "bg-foreground" : "bg-border"}`}
-            />
-          ))}
-        </View>
-      )}
     </View>
   );
 }

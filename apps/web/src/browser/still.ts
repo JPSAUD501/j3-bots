@@ -1,17 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { BrowserViewSize } from "@j3-bots/client-runtime";
-import type { BrowserTab, BrowserTabRef } from "@j3-bots/contracts";
+import type { BrowserTabRef } from "@j3-bots/contracts";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { useBrowser } from "./context";
 import { viewLockName } from "./kept";
 import { viewQuality, viewSize, type Size } from "./input";
 import { whileFree } from "./locks";
+import { keepPicture, type LastPicture, usePictureOfPage } from "./pictures";
 import { linkHint } from "./useTabView";
 import { type BrowserSource, opening } from "./source";
 
 /** How long a still waits for its picture before giving up. */
 const STILL_TIMEOUT = 10_000;
-/** How often a still is taken again while the bot works in the tab. */
+/** How often a still is taken again while bots work in the tab. */
 const STILL_EVERY = 5_000;
 
 /**
@@ -59,10 +60,41 @@ const takeStill = (
       }),
   );
 
-/** The page's object URL for a picture, revoked once replaced or unmounted. */
-const useObjectUrl = () => {
-  const [url, setUrl] = useState<string | null>(null);
-  // A still that arrives once the card is gone makes no URL, which nothing would revoke.
+/** Stills are taken one after another, so a list of tabs opens one socket at a time. */
+let turn: Promise<unknown> = Promise.resolve();
+const inTurn = <A>(run: () => Promise<A>): Promise<A> => {
+  const next = turn.then(run);
+  turn = next.catch(() => undefined);
+  return next;
+};
+
+/** The tab a still is of, as far as taking one goes. */
+export interface StillTab {
+  readonly ref: BrowserTabRef;
+  readonly url: string;
+  readonly loading: boolean;
+  /** This device holds the tab: a still would take its view's place. */
+  readonly heldHere: boolean;
+}
+
+/**
+ * The last picture of the page `tab` is on, null while there is none: what
+ * a view of it in this page showed last, or a still of it. A still is taken
+ * while `shown` (on screen, in a page in view) as it appears, as the tab
+ * navigates, finishes loading or its `activity` changes, and every few
+ * seconds while `refresh` holds. Each goes among the tabs' last pictures, so
+ * every card of the tab shows it.
+ */
+export function useStill(
+  tab: StillTab | null,
+  box: Size | null,
+  options: { readonly shown: boolean; readonly refresh: boolean; readonly activity: string },
+): LastPicture | null {
+  const { shown, refresh, activity } = options;
+  const { source } = useBrowser();
+  const [tick, setTick] = useState(0);
+  const busy = useRef(false);
+  // A still that waits its turn once the card is gone opens no socket.
   const mounted = useRef(false);
   useEffect(() => {
     mounted.current = true;
@@ -70,38 +102,6 @@ const useObjectUrl = () => {
       mounted.current = false;
     };
   }, []);
-  useEffect(
-    () => () => {
-      if (url !== null) URL.revokeObjectURL(url);
-    },
-    [url],
-  );
-  return [
-    url,
-    (jpeg: Uint8Array) => {
-      if (mounted.current) {
-        setUrl(URL.createObjectURL(new Blob([jpeg.slice()], { type: "image/jpeg" })));
-      }
-    },
-  ] as const;
-};
-
-/**
- * A still of `tab`, as an image URL: taken when the tab opens, navigates or
- * finishes loading, and every few seconds while `refresh` holds, but only
- * while `shown` (the still is on screen and the page in view). Never while
- * this device holds the tab: a still would take that view's place.
- */
-export function useStill(
-  tab: BrowserTab | null,
-  box: Size | null,
-  refresh: boolean,
-  shown: boolean,
-): string | null {
-  const { source } = useBrowser();
-  const [url, show] = useObjectUrl();
-  const [tick, setTick] = useState(0);
-  const busy = useRef(false);
   useEffect(() => {
     if (!refresh || !shown) return;
     const timer = window.setInterval(() => setTick((value) => value + 1), STILL_EVERY);
@@ -109,23 +109,49 @@ export function useStill(
   }, [refresh, shown]);
 
   const take = useEffectEvent(async () => {
-    if (tab === null || box === null || busy.current || tab.controller === "you") return;
+    if (tab === null || box === null || busy.current || tab.heldHere) return;
+    const { ref, url } = tab;
+    const size = { ...viewSize(box, window.devicePixelRatio), quality: viewQuality(linkHint()) };
     busy.current = true;
     try {
-      const jpeg = await takeStill(source, tab.ref, {
-        ...viewSize(box, window.devicePixelRatio),
-        quality: viewQuality(linkHint()),
-      });
-      if (jpeg !== null) show(jpeg);
+      const jpeg = await inTurn(() =>
+        mounted.current ? takeStill(source, ref, size) : Promise.resolve(null),
+      );
+      if (jpeg !== null) keepPicture(ref, jpeg, Date.now(), url);
     } finally {
       busy.current = false;
     }
   });
-  // What calls for a new still: another tab, another page or the end of a load, and each tick.
+  // What calls for a new still: another tab, another page, the end of a load, the bots' turn, and each tick.
   const due =
-    tab === null || box === null || !shown ? null : `${tab.ref} ${tab.url} ${tab.loading} ${tick}`;
+    tab === null || box === null || !shown
+      ? null
+      : `${tab.ref} ${tab.url} ${tab.loading} ${activity} ${tick}`;
   useEffect(() => {
     if (due !== null) void take();
   }, [due]);
-  return url;
+  return usePictureOfPage(tab ?? NO_TAB);
+}
+
+/** No tab: its page has no picture. */
+const NO_TAB = { ref: null, url: "" } as const;
+
+/** The size of `element`'s content box, null until it is measured. */
+export function useBoxOf(element: HTMLElement | null): Size | null {
+  const [box, setBox] = useState<Size | null>(null);
+  useEffect(() => {
+    if (element === null) return;
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry === undefined) return;
+      const { width, height } = entry.contentRect;
+      setBox((previous) =>
+        previous !== null && previous.width === width && previous.height === height
+          ? previous
+          : { width, height },
+      );
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [element]);
+  return box;
 }

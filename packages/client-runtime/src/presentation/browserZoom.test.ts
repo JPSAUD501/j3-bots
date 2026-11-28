@@ -10,6 +10,7 @@ import {
   NO_ZOOM,
   pinched,
   readingScale,
+  restingZoom,
   seenPart,
   zoomedAbout,
   zoomOn,
@@ -21,9 +22,19 @@ const page = { width: 1280, height: 800 };
 const picture = fitted(view, page);
 
 describe("the viewer's zoom", () => {
-  it("fits the page to the width, at the top", () => {
+  it("rests a desktop page filling the phone's height, its middle across in view", () => {
     expect(picture).toEqual({ width: 400, height: 250 });
-    expect(keptInView(NO_ZOOM, picture, view)).toEqual(NO_ZOOM);
+    // 2.4 times the fitted width: 960 by 600, as tall as the view, 280 points on each side of it.
+    expect(restingZoom(picture, view)).toEqual({ scale: 2.4, x: -280, y: 0 });
+  });
+
+  it("rests a page of the view's shape, or taller, fitted to the width at its top", () => {
+    const tall = fitted(view, { width: 390, height: 2000 });
+    expect(restingZoom(tall, view)).toEqual(NO_ZOOM);
+  });
+
+  it("centers a picture shorter than the view, as the person pinches out to see all of it", () => {
+    expect(keptInView(NO_ZOOM, picture, view)).toEqual({ scale: 1, x: 0, y: 175 });
   });
 
   it("keeps the page point between the fingers under them as they spread", () => {
@@ -70,7 +81,7 @@ describe("the viewer's zoom", () => {
   it("never leaves a gap at an edge the picture can cover", () => {
     const zoom = keptInView({ scale: 2, x: 50, y: -900 }, picture, view);
     // 800 by 500: wider than the view, shorter than it.
-    expect(zoom).toEqual({ scale: 2, x: 0, y: 0 });
+    expect(zoom).toEqual({ scale: 2, x: 0, y: 50 });
     expect(keptInView({ scale: 4, x: -2000, y: -900 }, picture, view)).toEqual({
       scale: 4,
       x: -1200,

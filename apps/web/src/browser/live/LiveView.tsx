@@ -67,7 +67,7 @@ import { AddressSheet } from "./AddressSheet";
 import { type Closed, useClosingTabs } from "./closing";
 import { useKeyboardInset } from "./keyboardInset";
 import { LivePage, type LivePageHandle } from "./LivePage";
-import { useLastPicture } from "./pictures";
+import { useLastPicture } from "../pictures";
 import { useSideSwipe } from "./swipe";
 import { TabGrid } from "./TabGrid";
 import { TabSheet } from "./TabSheet";
@@ -717,7 +717,7 @@ function LiveBar({
         >
           <ChevronDownIcon />
         </Button>
-        <p role="status" className="min-w-0 flex-1 truncate px-1.5 text-sm text-muted-foreground">
+        <p role="status" className="min-w-0 flex-1 px-1.5 text-sm text-muted-foreground">
           {text}
         </p>
         <Button variant="ghost" onClick={onDoneTyping}>
@@ -728,8 +728,30 @@ function LiveBar({
   }
 
   const index = tabs.findIndex((tab) => tab.ref === shown);
+  // The line reads whole on a row of its own, over the controls, wrapping rather than cut short.
+  const lined = text !== "" || faces.length > 0 || action !== null;
   return (
     <div {...swipe} className={cn("shrink-0 touch-pan-y border-t border-border pt-1", bottom)}>
+      {lined && (
+        <div className="flex items-center gap-1 px-2">
+          <button
+            type="button"
+            aria-label={text === "" ? t("browser.sheet.title") : text}
+            onClick={onSheet}
+            className="flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-md px-1 py-1 text-start focus-visible:outline-2 focus-visible:outline-accent"
+          >
+            <Faces faces={faces} />
+            <span aria-live="polite" className="min-w-0 flex-1 text-sm text-pretty">
+              {text}
+            </span>
+          </button>
+          {action !== null && (
+            <Button variant="outline" className="shrink-0 rounded-pill" onClick={use.giveBack}>
+              {t(action === "now" ? "browser.line.now" : "browser.line.continue")}
+            </Button>
+          )}
+        </div>
+      )}
       <div className="flex items-center gap-0.5 px-1">
         <Button
           ref={closeButton}
@@ -749,22 +771,28 @@ function LiveBar({
         >
           <ChevronLeftIcon />
         </Button>
-        <button
-          type="button"
-          aria-label={text === "" ? t("browser.sheet.title") : text}
-          onClick={onSheet}
-          className="flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-md px-1.5 text-start focus-visible:outline-2 focus-visible:outline-accent"
-        >
-          <Faces faces={faces} />
-          <span aria-live="polite" className="min-w-0 flex-1 truncate text-sm">
-            {text}
-          </span>
-        </button>
-        {action !== null && (
-          <Button variant="outline" className="shrink-0 rounded-pill" onClick={use.giveBack}>
-            {t(action === "now" ? "browser.line.now" : "browser.line.continue")}
-          </Button>
-        )}
+        <div className="flex min-w-0 flex-1 justify-center">
+          {tabs.length > 1 && index !== -1 && (
+            <div
+              role="img"
+              aria-label={t("browser.live.tabOf", {
+                index: String(index + 1),
+                count: String(tabs.length),
+              })}
+              className="flex flex-wrap justify-center gap-1.5"
+            >
+              {tabs.map((each, at) => (
+                <span
+                  key={each.ref}
+                  className={cn(
+                    "size-1.5 rounded-pill",
+                    at === index ? "bg-foreground" : "bg-border",
+                  )}
+                />
+              ))}
+            </div>
+          )}
+        </div>
         <Button
           variant="ghost-muted"
           size="icon"
@@ -793,23 +821,6 @@ function LiveBar({
           {menu}
         </Menu>
       </div>
-      {tabs.length > 1 && index !== -1 && (
-        <div
-          role="img"
-          aria-label={t("browser.live.tabOf", {
-            index: String(index + 1),
-            count: String(tabs.length),
-          })}
-          className="flex justify-center gap-1.5 pb-1"
-        >
-          {tabs.map((each, at) => (
-            <span
-              key={each.ref}
-              className={cn("size-1.5 rounded-pill", at === index ? "bg-foreground" : "bg-border")}
-            />
-          ))}
-        </div>
-      )}
     </div>
   );
 }

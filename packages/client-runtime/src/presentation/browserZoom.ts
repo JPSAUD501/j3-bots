@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { DrawnRect, PageSize, Point } from "./browser.ts";
 
-// How a live view draws a picture of the page: fitted to the view's width at
-// the top, then zoomed and moved by the person's fingers, or following a bot
-// at a size that reads. Zooming changes only the picture on the device,
+// How a live view draws a picture of the page: resting so it covers the
+// view, then zoomed and moved by the person's fingers, or following a bot at
+// a size that reads. Zooming changes only the picture on the device,
 // never the page, which the bots and the computer see as it is.
 
 /** A size in the view's points. */
@@ -41,9 +41,9 @@ export const drawnRect = (picture: Size, zoom: Zoom): DrawnRect => ({
 const clamp = (value: number, low: number, high: number) => Math.min(high, Math.max(low, value));
 
 /**
- * `zoom` kept over the view: a picture narrower than the view is centered
- * across it, one shorter sits at the top, and a larger one never leaves a
- * gap at an edge it can cover.
+ * `zoom` kept over the view: a picture narrower or shorter than the view is
+ * centered in it that way, and a larger one never leaves a gap at an edge it
+ * can cover.
  */
 export const keptInView = (zoom: Zoom, picture: Size, view: Size): Zoom => {
   const scale = clamp(zoom.scale, 1, MAX_ZOOM);
@@ -52,8 +52,23 @@ export const keptInView = (zoom: Zoom, picture: Size, view: Size): Zoom => {
   return {
     scale,
     x: width <= view.width ? (view.width - width) / 2 : clamp(zoom.x, view.width - width, 0),
-    y: height <= view.height ? 0 : clamp(zoom.y, view.height - height, 0),
+    y: height <= view.height ? (view.height - height) / 2 : clamp(zoom.y, view.height - height, 0),
   };
+};
+
+/**
+ * Where the view rests until the person moves it or it follows a bot. A page
+ * of the view's shape, or taller, is fitted to the view's width at its top.
+ * One wider than the view's shape, as a computer's page on a phone, is
+ * zoomed until it fills the view's height, its middle across in view, so
+ * the view is not left mostly empty; the person pinches out to see all of it.
+ */
+export const restingZoom = (picture: Size, view: Size): Zoom => {
+  if (picture.height <= 0 || picture.height >= view.height) {
+    return keptInView(NO_ZOOM, picture, view);
+  }
+  const scale = Math.min(view.height / picture.height, MAX_ZOOM);
+  return keptInView({ scale, x: (view.width - picture.width * scale) / 2, y: 0 }, picture, view);
 };
 
 const distance = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.y - b.y);

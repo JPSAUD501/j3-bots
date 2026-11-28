@@ -12,6 +12,7 @@ import {
   type PageTouch,
   type Point,
   readingScale,
+  restingZoom,
   seenPart,
   type Size,
   type TouchScene,
@@ -85,8 +86,9 @@ export interface PageViewHandle {
 /**
  * The page, drawn from the view's pictures, with each bot's pointer over it.
  *
- * Following a bot, it opens at a size that reads, where the bot acts, and
- * slides after its pointer. Two fingers zoom; one moves the zoomed view and,
+ * A computer's page, wider than the view's shape, rests filling the view's
+ * height (`restingZoom`). Following a bot, it opens at a size that reads,
+ * where the bot acts, and slides after its pointer. Two fingers zoom; one moves the zoomed view and,
  * past its edge, scrolls the page itself, as a phone's browser does. Moving
  * the view stops following, and the little map shows where the view is. A
  * tap clicks the page and marks where it landed, unless it only stopped a
@@ -142,19 +144,21 @@ export function PageView({
     const first = view.picture.get();
     return first === null ? [] : [layerOf(first)];
   });
+  // Kept with the address the page has as the picture comes.
+  const keep = useEffectEvent((jpeg: Uint8Array) => keepPicture(tabRef, jpeg, Date.now(), address));
   useEffect(
     () =>
       view.picture.subscribe(() => {
         const picture = view.picture.get();
         if (picture === null) return;
-        keepPicture(tabRef, picture.jpeg, Date.now());
+        keep(picture.jpeg);
         setLayers((now) => [
           // The newest drawn picture stays under the one coming until that one is drawn.
           ...now.filter((layer) => layer.drawn).slice(-1),
           layerOf(picture),
         ]);
       }),
-    [view, tabRef],
+    [view],
   );
   const drawnLayer = (sequence: number) => {
     setLayers((now) =>
@@ -194,11 +198,16 @@ export function PageView({
     });
   };
 
-  const [zoom, setZoom] = useState<Zoom>(NO_ZOOM);
+  // Null while the view rests, until the person moves it or it follows a bot.
+  const [zoom, setZoom] = useState<Zoom | null>(null);
   const picture = viewSize !== null && page !== null ? fitted(viewSize, page) : null;
   // The keyboard rising makes the view shorter: the picture stays in it.
   const shown =
-    picture !== null && viewSize !== null ? keptInView(zoom, picture, viewSize) : NO_ZOOM;
+    picture === null || viewSize === null
+      ? NO_ZOOM
+      : zoom === null
+        ? restingZoom(picture, viewSize)
+        : keptInView(zoom, picture, viewSize);
   const drawn = picture === null ? null : drawnRect(picture, shown);
 
   // Where the view goes while it follows a bot: its pointer, at a size that reads, or the
@@ -210,18 +219,20 @@ export function PageView({
       : null;
   const sliding = target !== null && !same(shown, target);
   // The view slides after the pointer, frame by frame, and rests where it gets to.
-  const aimed = useEffectEvent(() => target);
+  const aimed = useEffectEvent(() => ({ to: target, from: shown }));
   const following = follow !== null;
   useEffect(() => {
     if (!following) return;
     let last = Date.now();
     let frameId = requestAnimationFrame(function step() {
       const now = Date.now();
-      const to = aimed();
+      const { to, from } = aimed();
       if (to !== null) {
         setZoom((current) => {
-          const next = reduced ? to : easedToward(current, to, now - last);
-          return same(next, current) && same(next, to) ? current : next;
+          // The first time, from where the view rests.
+          const at = current ?? from;
+          const next = reduced ? to : easedToward(at, to, now - last);
+          return current !== null && same(next, current) && same(next, to) ? current : next;
         });
       }
       last = now;

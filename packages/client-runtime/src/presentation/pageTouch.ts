@@ -6,8 +6,9 @@ import { draggedView, drawnRect, pinched, type Size, type Zoom } from "./browser
 // What fingers on a live view's page do, the same on a phone and in a
 // narrow web page: one finger taps to click, holds to right-click, and
 // drags to move the person's view of a zoomed page, scrolling the page once
-// the view reaches its edge; two fingers pinch the view. Moving the view and
-// pinching are only looking: they send the page nothing.
+// the view reaches its edge the way the drag started; two fingers pinch the
+// view. Moving the view and pinching are only looking: they send the page
+// nothing.
 
 /** How far a finger moves before a touch is a drag, not a tap, in view points. */
 export const TAP_SLOP = 8;
@@ -23,8 +24,12 @@ export type PageTouch =
       readonly start: Point;
       readonly sliding: boolean;
     }
-  /** One finger dragging: the view moves, and past its edge the page scrolls. */
-  | { readonly _tag: "dragging"; readonly last: Point }
+  /**
+   * One finger dragging: the view moves, and past its edge the page scrolls,
+   * only `along` the way the drag started, so a finger that drifts as it
+   * moves the view across does not scroll the page, which would be using it.
+   */
+  | { readonly _tag: "dragging"; readonly last: Point; readonly along: "x" | "y" }
   /** Two fingers zooming and moving the picture. */
   | { readonly _tag: "pinching"; readonly from: readonly [Point, Point]; readonly zoom: Zoom }
   /** The touch did what it does already, as a long press does; the rest of it does nothing. */
@@ -147,12 +152,17 @@ export const touchMoved = (
       if (Math.hypot(first.x - touch.start.x, first.y - touch.start.y) < TAP_SLOP) {
         return step(touch);
       }
-      return step({ _tag: "dragging", last: touch.start });
+      return step({
+        _tag: "dragging",
+        last: touch.start,
+        along: Math.abs(first.x - touch.start.x) >= Math.abs(first.y - touch.start.y) ? "x" : "y",
+      });
     case "dragging": {
       const moved = { x: first.x - touch.last.x, y: first.y - touch.last.y };
-      const next: PageTouch = { _tag: "dragging", last: first };
+      const next: PageTouch = { _tag: "dragging", last: first, along: touch.along };
       if (scene.picture === null || scene.view === null) return step(next);
-      const { zoom, scroll } = draggedView(scene.zoom, moved, scene.picture, scene.view);
+      const { zoom, scroll: left } = draggedView(scene.zoom, moved, scene.picture, scene.view);
+      const scroll = touch.along === "x" ? { x: left.x, y: 0 } : { x: 0, y: left.y };
       // What the view could not take scrolls the page, which is using it.
       const at = onPage(first, scene);
       if (

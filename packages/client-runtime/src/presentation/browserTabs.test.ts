@@ -117,6 +117,27 @@ describe("the tab's line", () => {
   });
 });
 
+describe("a tab of one bot's list", () => {
+  it("reads as the shared list does: a bot that holds it between actions is on it, not acting", () => {
+    const tab = {
+      ref: BrowserTabRef.make("tab_lease"),
+      botId: ana,
+      url: "",
+      title: "",
+      loading: false,
+      controller: "bot",
+      front: true,
+      onIt: [ana, lia],
+      acting: null,
+      heldBy: { kind: "bot", botId: ana, until: DateTime.makeUnsafe(now + 5_000) },
+    } as const;
+    expect(tabLine(botViewerTab(tab, here), NO_PAGE_USE, now)).toEqual({
+      _tag: "on-it",
+      bots: [ana, lia],
+    });
+  });
+});
+
 describe("a tab from a server before shared tabs", () => {
   it("has its one bot on it, acting while it controls the tab, held here while this device has it", () => {
     const tab = {

@@ -172,6 +172,7 @@ export {
   NO_ZOOM,
   pinched,
   readingScale,
+  restingZoom,
   seenPart,
   type Size,
   type Zoom,

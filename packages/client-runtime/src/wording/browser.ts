@@ -76,7 +76,7 @@ export const liveLine = (
 
 /** The words of a tab's line, and the one thing it offers, if any. */
 export interface TabLineWords {
-  /** Empty while no bot is on the tab: the line's place stays, and nothing else moves. */
+  /** Empty while no bot is on the tab and nothing holds it: there is nothing to say. */
   readonly text: string;
   /** Now skips the countdown; Continue ends "Wait for me". */
   readonly action: "now" | "continue" | null;

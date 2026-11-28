@@ -104,7 +104,9 @@ export const sharedViewerTab = (tab: SharedBrowserTab, here: DeviceId | null): V
 
 /**
  * A tab of one bot's list (`browser.subscribe`). From a server before
- * shared tabs, the bot is the tab's only one, and the only one who acts.
+ * shared tabs, the bot is the tab's only one, and acts while it controls the
+ * tab. A server that shares tabs says who acts, and a bot that holds the tab
+ * between its actions is on it, not acting.
  */
 export const botViewerTab = (tab: BrowserTab, here: DeviceId | null): ViewerTab => {
   const holder =
@@ -116,7 +118,7 @@ export const botViewerTab = (tab: BrowserTab, here: DeviceId | null): ViewerTab 
     loading: tab.loading,
     where: tab.where ?? null,
     onIt: tab.onIt ?? [tab.botId],
-    acting: tab.acting ?? (holder._tag === "bot" ? holder.botId : null),
+    acting: tab.acting === undefined ? (holder._tag === "bot" ? holder.botId : null) : tab.acting,
     holder,
     private: false,
   };

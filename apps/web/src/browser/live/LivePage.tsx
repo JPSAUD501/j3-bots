@@ -13,6 +13,7 @@ import {
   type PageTouch,
   type Point,
   readingScale,
+  restingZoom,
   seenPart,
   type Size,
   type TouchScene,
@@ -40,7 +41,7 @@ import { useReducedMotion } from "../../onboarding/motion";
 import { BotCursors } from "../BotCursors";
 import { modifiersOf, wheelDelta } from "../input";
 import { PageField } from "../PageField";
-import { keepPicture, useLastPicture } from "./pictures";
+import { keepPicture, useLastPicture } from "../pictures";
 
 /** How long the mark of a tap stays where the finger touched. */
 const TAP_MARK_MS = 500;
@@ -79,9 +80,10 @@ const tabKey = (step: "next" | "previous"): ReadonlyArray<BrowserInput> => {
 /**
  * The page of the narrow web's live view, as the phone's: drawn from the
  * view's pictures with each bot's pointer over it, and what the person's
- * fingers do sent through the same steps (`pageTouch`). Following a bot, it
- * opens at a size that reads, where the bot acts, and slides after its
- * pointer; moving the view stops following, and the little map shows where
+ * fingers do sent through the same steps (`pageTouch`). A computer's page,
+ * wider than the view's shape, rests filling the view's height
+ * (`restingZoom`). Following a bot, it opens at a size that reads, where the
+ * bot acts, and slides after its pointer; moving the view stops following, and the little map shows where
  * the view is. A tap clicks and marks where it landed, unless it only
  * stopped a view still sliding; a long press right-clicks; a tap on a field
  * raises the keyboard, which types into the page through a hidden field, and
@@ -151,6 +153,8 @@ export function LivePage({
     return () => observer.disconnect();
   }, []);
 
+  // Kept with the address the page has as the picture comes.
+  const keep = useEffectEvent((jpeg: Uint8Array) => keepPicture(tabRef, jpeg, Date.now(), address));
   // The newest picture, decoded, drawn at the zoom; acknowledged once drawn, so the next comes then.
   const [frame, setFrame] = useState<{
     readonly bitmap: ImageBitmap;
@@ -173,7 +177,7 @@ export function LivePage({
           next.close();
           return;
         }
-        keepPicture(tabRef, picture.jpeg, Date.now());
+        keep(picture.jpeg);
         setFrame({ bitmap: next, sequence: picture.sequence });
       } catch {
         // A picture that does not decode is passed over: the last one drawn stays, and the next comes.
@@ -189,15 +193,20 @@ export function LivePage({
       stopped = true;
       stop();
     };
-  }, [view, tabRef]);
+  }, [view]);
   // A frame is let go once the next is drawn in its place, or the page goes.
   useEffect(() => () => frame?.bitmap.close(), [frame]);
 
-  const [zoom, setZoom] = useState<Zoom>(NO_ZOOM);
+  // Null while the view rests, until the person moves it or it follows a bot.
+  const [zoom, setZoom] = useState<Zoom | null>(null);
   const picture = viewSize !== null && page !== null ? fitted(viewSize, page) : null;
   // The keyboard rising makes the view shorter: the picture stays in it.
   const shown =
-    picture !== null && viewSize !== null ? keptInView(zoom, picture, viewSize) : NO_ZOOM;
+    picture === null || viewSize === null
+      ? NO_ZOOM
+      : zoom === null
+        ? restingZoom(picture, viewSize)
+        : keptInView(zoom, picture, viewSize);
   const drawn = picture === null ? null : drawnRect(picture, shown);
 
   const left = drawn?.left ?? 0;
@@ -248,17 +257,19 @@ export function LivePage({
       : null;
   const sliding = target !== null && !same(shown, target);
   // The view slides after the pointer, frame by frame, and rests where it gets to.
-  const aimed = useEffectEvent(() => target);
+  const aimed = useEffectEvent(() => ({ to: target, from: shown }));
   const following = follow !== null;
   useEffect(() => {
     if (!following) return;
     let last = performance.now();
     let frame = requestAnimationFrame(function step(now) {
-      const to = aimed();
+      const { to, from } = aimed();
       if (to !== null) {
         setZoom((current) => {
-          const next = reduced ? to : easedToward(current, to, now - last);
-          return same(next, current) && same(next, to) ? current : next;
+          // The first time, from where the view rests.
+          const at = current ?? from;
+          const next = reduced ? to : easedToward(at, to, now - last);
+          return current !== null && same(next, current) && same(next, to) ? current : next;
         });
       }
       last = now;
