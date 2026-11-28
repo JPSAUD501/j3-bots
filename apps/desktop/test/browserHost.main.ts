@@ -3,7 +3,7 @@ import { BotId, DeviceId } from "@j3-bots/contracts";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import * as Stream from "effect/Stream";
-import { app, BaseWindow } from "electron";
+import { app, BaseWindow, net, WebContentsView } from "electron";
 import { makeDesktopBrowser } from "../src/browser/host.ts";
 import { linkToServer } from "../src/browser/link.ts";
 
@@ -12,6 +12,8 @@ import { linkToServer } from "../src/browser/link.ts";
 // `J3_CHECK_SERVER`, its profile and scratch folder in `J3_CHECK_FOLDER`. A
 // tab the server opens at `/presence` is shown in a window of its own, with a
 // bot on it, as the app's page would say: its page draws the bot's pointer.
+// As that page's title asks ("Look"), what the window shows of it goes to the
+// server at `/seen`, as the person sees it.
 
 const server = process.env["J3_CHECK_SERVER"];
 const folder = process.env["J3_CHECK_FOLDER"];
@@ -32,30 +34,45 @@ const program = Effect.gen(function* () {
     Effect.sync(() => new BaseWindow({ width: 800, height: 600 })),
     (window) => Effect.sync(() => window.destroy()),
   );
+  const look = Effect.gen(function* () {
+    const view = screen.contentView.children.find(
+      (child): child is WebContentsView => child instanceof WebContentsView,
+    );
+    if (view === undefined) return yield* Effect.die("The window shows no tab.");
+    const image = yield* Effect.promise(() => view.webContents.capturePage());
+    yield* Effect.promise(() =>
+      net.fetch(`${server}/seen`, { method: "POST", body: Uint8Array.from(image.toPNG()) }),
+    );
+  });
   yield* browser.local.pipe(
     Stream.runForEach((event) =>
-      event.type === "changed" &&
-      !event.tab.private &&
-      URL.parse(event.page.url)?.pathname === "/presence"
-        ? Effect.andThen(
-            Effect.sync(() =>
-              browser.show(event.tab.ref, screen, { x: 0, y: 0, width: 800, height: 600 }),
+      event.type !== "changed" ||
+      event.tab.private ||
+      URL.parse(event.page.url)?.pathname !== "/presence"
+        ? Effect.void
+        : event.page.title === "Look"
+          ? look
+          : Effect.andThen(
+              Effect.sync(() =>
+                browser.show(event.tab.ref, screen, { x: 0, y: 0, width: 800, height: 600 }),
+              ),
+              browser.presence([
+                {
+                  tab: event.tab.ref,
+                  bots: [
+                    {
+                      id: BotId.make("bot-check"),
+                      profile: {
+                        name: "Pointer Check",
+                        avatar: { shape: "dome", color: "cobalt" },
+                      },
+                      thinking: false,
+                    },
+                  ],
+                  held: false,
+                },
+              ]),
             ),
-            browser.presence([
-              {
-                tab: event.tab.ref,
-                bots: [
-                  {
-                    id: BotId.make("bot-check"),
-                    profile: { name: "Pointer Check", avatar: { shape: "dome", color: "cobalt" } },
-                    thinking: false,
-                  },
-                ],
-                held: false,
-              },
-            ]),
-          )
-        : Effect.void,
     ),
     Effect.forkScoped,
   );

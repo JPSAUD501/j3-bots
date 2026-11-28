@@ -4,6 +4,7 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeZlib from "node:zlib";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import { assert, describe, it } from "@effect/vitest";
 import { type PageHost, pageHostOnSocket } from "@j3-bots/browser";
@@ -139,6 +140,8 @@ const PAGES: Readonly<Record<string, () => HttpServerResponse.HttpServerResponse
     ),
   // A page whose policy lets in nothing but its own script, as a strict site's does, where a
   // bot's pointer is drawn (browserHost.main.ts): what is pressed and typed shows in its title.
+  // It is orange and black throughout, styled by its script as its policy allows: nothing of
+  // it is blue, as the bot's pointer is, or white, as its tag is.
   "/presence": () =>
     HttpServerResponse.text(
       page(
@@ -146,6 +149,13 @@ const PAGES: Readonly<Record<string, () => HttpServerResponse.HttpServerResponse
         `<button id="press">Press</button>
          <input id="field" aria-label="Field">
          <script>
+           document.documentElement.style.background = "rgb(200, 140, 60)";
+           for (const element of document.querySelectorAll("button, input")) {
+             element.style.background = "rgb(170, 110, 40)";
+             element.style.color = "black";
+             element.style.border = "0";
+             element.style.outline = "none";
+           }
            let pressed = 0;
            document.getElementById("press").onclick = () => {
              pressed += 1;
@@ -190,9 +200,13 @@ const echoHeaders = (request: HttpServerRequest.HttpServerRequest) =>
     contentType: "text/html",
   });
 
-/** The server's side: the host that dialed in, and the fake site on the same port. */
+/**
+ * The server's side: the host that dialed in, the fake site on the same port,
+ * and the picture of the shown page the check's main sends (`/seen`).
+ */
 const playServer = Effect.gen(function* () {
   const reached = yield* Deferred.make<PageHost>();
+  const seen = yield* Deferred.make<Uint8Array>();
   const done = yield* Deferred.make<void>();
   yield* HttpServer.serveEffect(
     Effect.gen(function* () {
@@ -209,6 +223,10 @@ const playServer = Effect.gen(function* () {
         return HttpServerResponse.empty();
       }
       if (path === "/headers") return echoHeaders(request);
+      if (path === "/seen") {
+        yield* Deferred.succeed(seen, new Uint8Array(yield* Effect.orDie(request.arrayBuffer)));
+        return HttpServerResponse.empty();
+      }
       return PAGES[path]?.() ?? HttpServerResponse.empty({ status: 404 });
     }).pipe(Effect.scoped),
   );
@@ -216,7 +234,7 @@ const playServer = Effect.gen(function* () {
   const { address } = yield* HttpServer.HttpServer;
   if (!NetAddress.isInetAddress(address))
     return yield* Effect.die("The check's server has no port.");
-  return { port: address.port, reached };
+  return { port: address.port, reached, seen };
 });
 
 /** Electron running the desktop's browser, linked to `server`, in a folder of its own. */
@@ -275,6 +293,64 @@ const decodePoint = Schema.decodeUnknownSync(
   Schema.Struct({ x: Schema.Finite, y: Schema.Finite, under: Schema.NullOr(Schema.String) }),
 );
 
+const paeth = (left: number, up: number, upLeft: number) => {
+  const guess = left + up - upLeft;
+  const toLeft = Math.abs(guess - left);
+  const toUp = Math.abs(guess - up);
+  const toUpLeft = Math.abs(guess - upLeft);
+  return toLeft <= toUp && toLeft <= toUpLeft ? left : toUp <= toUpLeft ? up : upLeft;
+};
+
+/**
+ * How many pixels of a PNG (8 bits a channel, RGB or RGBA, not interlaced, as
+ * Chromium writes them) are of the bot's pointer, blue, and of its tag, white.
+ */
+const inkOf = (png: Uint8Array) => {
+  const read = new DataView(png.buffer, png.byteOffset, png.byteLength);
+  let width = 0;
+  let height = 0;
+  let channels = 0;
+  const data: Array<Uint8Array> = [];
+  for (let at = 8; at < png.length;) {
+    const length = read.getUint32(at);
+    const type = new TextDecoder().decode(png.subarray(at + 4, at + 8));
+    if (type === "IHDR") {
+      width = read.getUint32(at + 8);
+      height = read.getUint32(at + 12);
+      assert.deepStrictEqual([png[at + 16], png[at + 20]], [8, 0], "8 bits, not interlaced");
+      channels = png[at + 17] === 6 ? 4 : png[at + 17] === 2 ? 3 : 0;
+      assert.notStrictEqual(channels, 0, "RGB or RGBA");
+    } else if (type === "IDAT") {
+      data.push(png.subarray(at + 8, at + 8 + length));
+    }
+    at += 12 + length;
+  }
+  const rows = NodeZlib.inflateSync(Buffer.concat(data));
+  const stride = width * channels;
+  let above = new Uint8Array(stride);
+  let blue = 0;
+  let white = 0;
+  for (let y = 0; y < height; y += 1) {
+    const start = y * (stride + 1);
+    const filter = rows[start] ?? 0;
+    const row = new Uint8Array(stride);
+    for (let x = 0; x < stride; x += 1) {
+      const left = x >= channels ? (row[x - channels] ?? 0) : 0;
+      const up = above[x] ?? 0;
+      const upLeft = x >= channels ? (above[x - channels] ?? 0) : 0;
+      const predicted = [0, left, up, (left + up) >> 1, paeth(left, up, upLeft)][filter] ?? 0;
+      row[x] = ((rows[start + 1 + x] ?? 0) + predicted) & 0xff;
+    }
+    for (let x = 0; x < stride; x += channels) {
+      const [red, green, blueness] = [row[x] ?? 0, row[x + 1] ?? 0, row[x + 2] ?? 0];
+      if (blueness > red + 60 && blueness > green + 40) blue += 1;
+      if (red > 235 && green > 235 && blueness > 235) white += 1;
+    }
+    above = row;
+  }
+  return { blue, white };
+};
+
 describe.skipIf(process.platform !== "linux" || process.env["DISPLAY"] === undefined)(
   "the desktop's browser, driven by a server",
   () => {
@@ -282,7 +358,7 @@ describe.skipIf(process.platform !== "linux" || process.env["DISPLAY"] === undef
       "runs the server's tabs: pages, pop-ups, downloads, uploads, dialogs and sign-ins",
       () =>
         Effect.gen(function* () {
-          const { port, reached } = yield* playServer;
+          const { port, reached, seen: pictured } = yield* playServer;
           yield* runBrowser(`http://127.0.0.1:${port}`);
           const host = yield* Deferred.await(reached).pipe(Effect.timeout(STEP));
           const site = `http://pages.j3test.localhost:${port}`;
@@ -621,11 +697,18 @@ describe.skipIf(process.platform !== "linux" || process.env["DISPLAY"] === undef
           yield* press("down");
           yield* press("up");
           assert.strictEqual(yield* inPage("document.title"), "Pressed 2");
+          // The person sees the bot's pointer and its tag in the page: the check's main
+          // sends what the tab's view shows as its title asks.
+          yield* inPage(`document.title = "Look"`);
+          const asShown = inkOf(yield* Deferred.await(pictured).pipe(Effect.timeout(STEP)));
+          assert.isAbove(asShown.blue, 0);
+          assert.isAbove(asShown.white, 0);
           // A picture for a bot leaves the pointer out, and it shows again after.
-          yield* host.screenshot({ tab: onScreen, format: "png" });
+          const image = yield* host.screenshot({ tab: onScreen, format: "png" });
+          assert.deepStrictEqual(inkOf(Buffer.from(image.data, "base64")), { blue: 0, white: 0 });
           assert.strictEqual(
-            yield* inPage(`getComputedStyle(document.querySelector("j3-presence")).visibility`),
-            "visible",
+            yield* inPage(`getComputedStyle(document.querySelector("j3-presence")).opacity`),
+            "1",
           );
           // A field the bot types in shows the bot's caret.
           yield* host.act({

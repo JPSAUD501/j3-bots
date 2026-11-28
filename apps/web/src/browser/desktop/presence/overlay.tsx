@@ -40,7 +40,8 @@ const styleHost = (host: HTMLElement, hidden: boolean) => {
     ["z-index", "2147483647"],
     ["pointer-events", "none"],
     ["contain", "strict"],
-    ["visibility", hidden ? "hidden" : "visible"],
+    // Not visibility, which the face's own parts set again for themselves.
+    ["opacity", hidden ? "0" : "1"],
   ] as const) {
     host.style.setProperty(name, value, "important");
   }
@@ -115,10 +116,14 @@ const giveCaretBack = () => {
 let drawn: Drawn = NOBODY;
 let palette: HTMLElement | null = null;
 
-/** The focused field's caret is the bot's on the tab, while it acts there: the person's while they hold it. */
+/**
+ * The focused field's caret is the bot's on the tab, while it acts there: the
+ * person's while they hold it, and the page's own in a picture for a bot.
+ */
 const colorCaret = () => {
   const bot = drawn.bots[0];
-  const field = bot === undefined || drawn.held || palette === null ? null : focusedField();
+  const field =
+    bot === undefined || drawn.held || drawn.hidden || palette === null ? null : focusedField();
   if (field !== careted?.field) giveCaretBack();
   if (field === null || bot === undefined || palette === null) return;
   const ink = getComputedStyle(palette)
