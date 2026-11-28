@@ -359,13 +359,20 @@ export const layer = Layer.effect(
         }),
       );
 
-    /** A person's input to the page: applied only once it holds the tab for them. */
+    /**
+     * A person's input to the page: applied only once it holds the tab for
+     * them. With no host to take it, refused, saying why, and holding nothing.
+     */
     const used = Effect.fnUntraced(function* (
       feed: Feed,
       viewer: Viewer,
       apply: (host: PageHost) => Effect.Effect<unknown>,
     ) {
-      if (Option.isNone(feed.host)) return;
+      if (Option.isNone(feed.host)) {
+        // A desktop's tab with no host waits for its app; any other runs nowhere.
+        const reason = feed.tab?.where.kind === "desktop" ? "away" : "parked";
+        return yield* sendTo(viewer, { type: "refused", reason });
+      }
       if (!(yield* browser.personUsed(feed.ref, viewer.deviceId))) return;
       // Their input takes the tab at once, and reaches the page once a fill's typing ended.
       yield* feed.watched.control.afterFill;

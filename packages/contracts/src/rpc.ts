@@ -1301,8 +1301,14 @@ export const BrowserRpcs = RpcGroup.make(
   Rpc.make("browser.subscribeAll", { success: SharedBrowserTabs, stream: true }),
   /**
    * Opens a tab for the person, where a new tab opens (on the desktop they
-   * used last, else on the server), at `url` or blank. Only on a server
-   * whose roster carries `sharedBrowser`.
+   * used last, else on the server), at `url` or blank. A `Conflict` says why
+   * no tab opened: no browser can take it now (`browser-unavailable`,
+   * `browser-app-only`, `browser-full`), or the one that took it could not
+   * open the page (`browser-page-timeout`, `browser-page-failed`,
+   * `browser-address-refused`), and the tab is gone again. A page that
+   * loads with an error, as an address whose name does not resolve, opens
+   * the tab on the browser's error page. Only on a server whose roster
+   * carries `sharedBrowser`.
    */
   Rpc.make("browser.open", {
     payload: { ...command, url: Schema.optionalKey(BrowserWebAddress) },

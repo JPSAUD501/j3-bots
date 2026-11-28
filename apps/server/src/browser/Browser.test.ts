@@ -3,6 +3,7 @@ import { assert, it } from "@effect/vitest";
 import { type FakePageHost, makeFakePageHost } from "@j3-bots/browser/testing";
 import {
   type BotId,
+  BrowserHostError,
   BrowserTabRef,
   DeviceId,
   MAX_ATTACHMENT_SIZE,
@@ -14,6 +15,8 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
+import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -22,6 +25,7 @@ import { operatorDevice, TestServerBrowser } from "../testing/browser.ts";
 import * as TestDomain from "../testing/domain.ts";
 import { createBot } from "../testing/turns.ts";
 import { Browser, DESKTOP_GRACE, SERVER_TAB_CAP } from "./Browser.ts";
+import type { ServerBrowserUnavailable } from "./server/ServerBrowser.ts";
 import { TabAccess } from "./TabAccess.ts";
 import { BOT_LEASE } from "./TabControl.ts";
 
@@ -373,4 +377,103 @@ it.effect("refuses a fill whose tab lost its browser while the fill waited its t
     const hands = Option.getOrThrow(yield* browser.handsOf(ref));
     assert.notStrictEqual((yield* hands.control.state).holder?.kind, "fill");
   }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("says why no tab opened for the person: no browser, an app-only server, a full one", () =>
+  Effect.gen(function* () {
+    const browser = yield* Browser;
+    const server = yield* TestServerBrowser;
+    const phone = yield* operatorDevice("Phone");
+    const reasonOf = (problem: ServerBrowserUnavailable["reason"] | null) =>
+      Effect.gen(function* () {
+        yield* server.refuse(problem);
+        const ref = BrowserTabRef.make(`tab-${problem ?? "full"}`);
+        const refused = yield* browser
+          .openForPerson({ device: phone, ref, url: "https://news.example.test/" })
+          .pipe(Effect.flip);
+        // Nothing is left behind of a tab that did not open.
+        assert.isTrue(Option.isNone(yield* browser.handsOf(ref)));
+        return refused.reason;
+      });
+    assert.strictEqual(yield* reasonOf("sandbox"), "browser-unavailable");
+    assert.strictEqual(yield* reasonOf("failed"), "browser-unavailable");
+    assert.strictEqual(yield* reasonOf("off"), "browser-app-only");
+    assert.strictEqual(yield* reasonOf("platform"), "browser-app-only");
+
+    const bot = yield* createBot("Ana");
+    yield* server.refuse(null);
+    for (let n = 0; n < SERVER_TAB_CAP; n++) {
+      const ref = yield* open(bot.id, `https://page${n}.example.test/`);
+      assert.isTrue(yield* Option.getOrThrow(yield* browser.handsOf(ref)).control.waitForMe(phone));
+    }
+    assert.strictEqual(yield* reasonOf(null), "browser-full");
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("says why the browser that took the person's tab did not open its page", () =>
+  Effect.gen(function* () {
+    const browser = yield* Browser;
+    const fake = yield* makeFakePageHost({ host: { kind: "desktop", device: laptop } });
+    const failure = yield* Ref.make(new BrowserHostError({ reason: "timeout" }));
+    yield* attach({ ...fake, open: () => Effect.flatMap(Ref.get(failure), Effect.fail) });
+    const reasonOf = (error: BrowserHostError) =>
+      Effect.gen(function* () {
+        yield* Ref.set(failure, error);
+        const ref = BrowserTabRef.make(`tab-${error.reason}`);
+        const refused = yield* browser
+          .openForPerson({ device: laptop, ref, url: "https://slow.example.test/" })
+          .pipe(Effect.flip);
+        assert.isTrue(Option.isNone(yield* browser.handsOf(ref)));
+        return refused.reason;
+      });
+    assert.strictEqual(
+      yield* reasonOf(new BrowserHostError({ reason: "timeout" })),
+      "browser-page-timeout",
+    );
+    assert.strictEqual(
+      yield* reasonOf(new BrowserHostError({ reason: "refused", detail: "Not that address." })),
+      "browser-address-refused",
+    );
+    assert.strictEqual(
+      yield* reasonOf(new BrowserHostError({ reason: "page", detail: "Target crashed." })),
+      "browser-page-failed",
+    );
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "lists a desktop's tab as away, with no host for its viewers, as soon as its app goes, and live again once it is back",
+  () =>
+    Effect.gen(function* () {
+      const browser = yield* Browser;
+      const bot = yield* createBot("Ana");
+      const { host, attached } = yield* desktop(laptop);
+      const ref = yield* open(bot.id, "https://news.example.test/");
+      const watched = Option.getOrThrow(yield* browser.watch(ref));
+      const hosts = yield* Queue.unbounded<Option.Option<unknown>>();
+      yield* watched.host.pipe(
+        Stream.runForEach((each) => Queue.offer(hosts, each)),
+        Effect.forkScoped,
+      );
+      assert.isTrue(Option.isSome(yield* Queue.take(hosts)));
+
+      yield* Scope.close(attached, Exit.void);
+      // At once: no time passes.
+      assert.isTrue(Option.isNone(yield* Queue.take(hosts)));
+      yield* tabsWhen((tabs) =>
+        tabs.some(
+          (tab) => tab.ref === ref && tab.where.kind === "desktop" && tab.where.away === true,
+        ),
+      );
+
+      yield* attach(host);
+      assert.isTrue(Option.isSome(yield* Queue.take(hosts)));
+      const back = yield* tabsWhen((tabs) =>
+        tabs.some((tab) => tab.ref === ref && tab.where.kind === "desktop" && !tab.where.away),
+      );
+      assert.deepStrictEqual(back.find((tab) => tab.ref === ref)?.where, {
+        kind: "desktop",
+        device: laptop,
+      });
+    }).pipe(Effect.scoped, Effect.provide(TestDomain.layer)),
 );

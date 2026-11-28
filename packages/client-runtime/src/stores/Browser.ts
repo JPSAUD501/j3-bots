@@ -362,6 +362,10 @@ export const layer = Layer.effect(
               return Effect.succeed(null);
             case "ping":
               return send({ type: "pong" }).pipe(Effect.as(null));
+            case "refused":
+              // The tab runs in no browser now: the tab list's `where` says
+              // so, and why, and a viewer offers no input meanwhile.
+              return Effect.succeed(null);
             case "gone":
               return Effect.succeed({ _tag: "gone" });
             case "setup-needed":

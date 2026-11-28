@@ -12,8 +12,11 @@ import type * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { DeviceAuth } from "../auth/DeviceAuth.ts";
@@ -21,7 +24,7 @@ import { Devices } from "../devices/Devices.ts";
 import { botOpens } from "../testing/browser.ts";
 import * as TestDomain from "../testing/domain.ts";
 import { createNewBot } from "../testing/turns.ts";
-import { Browser } from "./Browser.ts";
+import { Browser, DESKTOP_GRACE } from "./Browser.ts";
 import {
   BrowserViewers,
   type ClientLink,
@@ -84,6 +87,10 @@ const isPing = (
   message: Received,
 ): message is Extract<BrowserServerFrame, { readonly type: "ping" }> =>
   !(message instanceof Uint8Array) && message.type === "ping";
+const isRefused = (
+  message: Received,
+): message is Extract<BrowserServerFrame, { readonly type: "refused" }> =>
+  !(message instanceof Uint8Array) && message.type === "refused";
 const isProbe = (
   message: Received,
 ): message is Extract<BrowserServerFrame, { readonly type: "probe" }> =>
@@ -358,4 +365,49 @@ it.effect("pings a socket, keeps one that answers, and ends one silent for the l
     yield* Fiber.join(ended);
     assert.isUndefined(kept.pollUnsafe());
   }).pipe(Effect.scoped, Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "refuses a person's input while the tab's app is away, holding nothing, and says the tab is parked once the grace ends",
+  () =>
+    Effect.gen(function* () {
+      const laptop = yield* pairDevice("Laptop");
+      const phone = yield* pairDevice("Phone");
+      const browser = yield* Browser;
+      const host = yield* makeFakePageHost({ host: { kind: "desktop", device: laptop } });
+      const attached = yield* Scope.make();
+      yield* browser
+        .attachHost(host, yield* host.hello.pipe(Effect.orDie))
+        .pipe(Scope.provide(attached));
+      const ref = BrowserTabRef.make(`tab-${++tabs}`);
+      yield* browser.openForPerson({ device: laptop, ref, url: "https://example.com/" });
+      const client = yield* fakeLink;
+      yield* connect(phone, ref, client.link);
+      yield* controlSays(client, "nobody");
+
+      yield* Scope.close(attached, Exit.void);
+      yield* settle;
+      yield* client.say(textInput);
+      assert.deepStrictEqual(yield* client.nextWhere(isRefused), {
+        type: "refused",
+        reason: "away",
+      });
+      assert.strictEqual(yield* callsOf(host, "tab.input"), 0);
+      const hands = Option.getOrThrow(yield* browser.handsOf(ref));
+      assert.isNull((yield* hands.control.state).holder);
+
+      // The grace passes on a socket that keeps answering its pings.
+      const step = Duration.toMillis(DESKTOP_GRACE) / 3;
+      for (let round = 0; round < 3; round++) {
+        yield* TestClock.adjust(step);
+        yield* client.say({ type: "pong" });
+        yield* settle;
+      }
+      yield* client.say({ type: "reload" });
+      assert.deepStrictEqual(yield* client.nextWhere(isRefused), {
+        type: "refused",
+        reason: "parked",
+      });
+      assert.strictEqual(yield* callsOf(host, "tab.navigate"), 0);
+    }).pipe(Effect.scoped, Effect.provide(TestDomain.layer)),
 );
