@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, it } from "@effect/vitest";
+import type { BotId } from "@j3-bots/contracts";
 import type { SessionId } from "@j3-bots/engine-t3";
 import { BROWSER_NOTES } from "@j3-bots/prompts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import { TestServerBrowser } from "../testing/browser.ts";
+import * as Stream from "effect/Stream";
+import { Browser } from "../browser/Browser.ts";
+import { botOpens, TestServerBrowser } from "../testing/browser.ts";
 import * as TestDomain from "../testing/domain.ts";
 import {
   command,
@@ -102,4 +105,22 @@ it.effect(
       const read = yield* browse(session, "browser_snapshot", {});
       assert.strictEqual(read._tag, "result");
     }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("takes a bot off the tabs it is on once its browser is turned off", () =>
+  Effect.gen(function* () {
+    const bots = yield* Bots;
+    const browser = yield* Browser;
+    const bot = yield* createBot("Ana");
+    const ref = yield* botOpens(bot.id, "https://shop.example.test/");
+    const onIt = (until: (bots: ReadonlyArray<BotId>) => boolean) =>
+      browser.all.pipe(
+        Stream.map(({ tabs }) => tabs.find((tab) => tab.ref === ref)?.onIt),
+        Stream.filter((on): on is ReadonlyArray<BotId> => on !== undefined && until(on)),
+        Stream.runHead,
+      );
+    yield* onIt((on) => on.includes(bot.id));
+    yield* bots.update({ commandId: command(), botId: bot.id, changes: { browser: false } });
+    assert.deepStrictEqual(yield* onIt((on) => !on.includes(bot.id)), Option.some([]));
+  }).pipe(Effect.provide(TestDomain.layer)),
 );

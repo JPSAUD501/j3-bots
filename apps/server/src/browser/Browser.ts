@@ -48,6 +48,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { workspaceReader } from "../attachments/workspaceFile.ts";
+import { DeviceAuth } from "../auth/DeviceAuth.ts";
 import { BotStore } from "../bots/BotStore.ts";
 import { Devices } from "../devices/Devices.ts";
 import { Ids } from "../Ids.ts";
@@ -192,7 +193,10 @@ export class Browser extends Context.Service<
      * their input is then not applied.
      */
     readonly personUsed: (ref: BrowserTabRef, device: DeviceId) => Effect.Effect<boolean>;
-    /** `botId` may browse no more: its queued actions fail and its leases end. */
+    /**
+     * `botId` may browse no more, its browser turned off or the bot deleted:
+     * its queued actions fail, its leases end, and it is on no tab.
+     */
     readonly withdraw: (botId: BotId) => Effect.Effect<void>;
     /**
      * Serves `host` until the scope closes or its events end: its tabs join
@@ -298,6 +302,7 @@ export const layer = Layer.effect(
     const store = yield* makeRegistryStore;
     const bots = yield* BotStore;
     const devices = yield* Devices;
+    const auth = yield* DeviceAuth;
     const ids = yield* Ids;
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -366,6 +371,31 @@ export const layer = Layer.effect(
             usedAt: tab.usedAt,
           } satisfies StoredTab);
 
+    /**
+     * A person's holds from `device` end once it is revoked: nobody can give
+     * the tabs back from it then, and a "Wait for me" would hold them for
+     * good. One watch per device that holds a tab.
+     */
+    const revokeWatched = new Set<DeviceId>();
+    const endsOnRevoke = (device: DeviceId) =>
+      Effect.suspend(() => {
+        if (revokeWatched.has(device)) return Effect.void;
+        revokeWatched.add(device);
+        return auth.revoked(device).pipe(
+          // Another device's release gives nothing back, so every tab is asked.
+          Effect.andThen(
+            Effect.suspend(() =>
+              Effect.forEach(tabs.values(), (each) => each.control.release(device, false), {
+                discard: true,
+              }),
+            ),
+          ),
+          Effect.ensuring(Effect.sync(() => revokeWatched.delete(device))),
+          Effect.forkIn(serviceScope),
+          Effect.asVoid,
+        );
+      });
+
     const hostOf = (tab: Tab): Host | undefined => {
       const key = keyOfWhere(tab.where);
       return key === null ? undefined : hosts.get(key);
@@ -408,7 +438,11 @@ export const layer = Layer.effect(
       tabs.set(tab.ref, tab);
       // Each change of hands changes the list.
       yield* control.changes.pipe(
-        Stream.runForEach(() => bump),
+        Stream.runForEach((state) =>
+          state.holder?.kind === "person"
+            ? endsOnRevoke(state.holder.device).pipe(Effect.andThen(bump))
+            : bump,
+        ),
         Effect.forkIn(scope),
       );
       return tab;
@@ -670,10 +704,14 @@ export const layer = Layer.effect(
       hosts.set(key, entry);
       // The host's tabs, matched with the registry. One that runs on another
       // live host since is closed here, so a tab runs in one place.
-      for (const page of hello.tabs) {
+      const held = [
+        ...hello.tabs.map((page) => ({ page, isPrivate: false })),
+        ...(hello.privateTabs ?? []).map((page) => ({ page, isPrivate: true })),
+      ];
+      for (const { page, isPrivate } of held) {
         const known = tabs.get(page.tab);
         if (known === undefined) {
-          yield* adoptUnknown(hello, page, null, false);
+          yield* adoptUnknown(hello, page, null, isPrivate);
           continue;
         }
         const elsewhere = keyOfWhere(known.where);
@@ -686,7 +724,7 @@ export const layer = Layer.effect(
       }
       // Tabs that waited for this desktop and that it no longer holds are parked.
       for (const tab of tabs.values())
-        if (keyOfWhere(tab.where) === key && !hello.tabs.some((page) => page.tab === tab.ref))
+        if (keyOfWhere(tab.where) === key && !held.some(({ page }) => page.tab === tab.ref))
           yield* park(tab);
       yield* bump;
       const ended = yield* Deferred.make<void>();
@@ -1322,7 +1360,10 @@ export const layer = Layer.effect(
     });
 
     const withdraw = Effect.fn("Browser.withdraw")(function* (botId: BotId) {
-      for (const tab of tabs.values()) yield* tab.control.withdraw(botId);
+      for (const tab of tabs.values()) {
+        yield* tab.control.withdraw(botId);
+        if (tab.bots.delete(botId)) yield* persist(tab);
+      }
       current.delete(botId);
       yield* bump;
     });

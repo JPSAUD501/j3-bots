@@ -19,7 +19,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { timeText } from "../persistence/columns.ts";
-import { botOpens } from "../testing/browser.ts";
+import { botOpens, operatorDevice } from "../testing/browser.ts";
 import * as TestDomain from "../testing/domain.ts";
 import {
   awaitEntry,
@@ -41,8 +41,6 @@ import { HAND_BACK_GRACE, SWEEP_EVERY, TAB_ABSENT_GRACE } from "./browserHelpRul
 import { TabAccess } from "./TabAccess.ts";
 
 const SIGN_IN = "https://mail.example.com/signin";
-const PHONE = DeviceId.make("device-phone");
-const LAPTOP = DeviceId.make("device-laptop");
 
 let requests = 0;
 
@@ -150,17 +148,19 @@ const personHolding = Effect.gen(function* () {
   return Option.getOrElse(holds, () => []).length > 0;
 });
 
-/** The person on `device` asks the bots to wait for them on the tab, and holds it. */
-const takes = (tab: BrowserTabRef, device: DeviceId = PHONE) =>
+/** The person on `device`, their phone unless named, asks the bots to wait for them on the tab, and holds it. */
+const takes = (tab: BrowserTabRef, device?: DeviceId) =>
   Effect.gen(function* () {
-    assert.isTrue(yield* (yield* controlOf(tab)).waitForMe(device));
+    const holder = device ?? (yield* operatorDevice("Phone"));
+    assert.isTrue(yield* (yield* controlOf(tab)).waitForMe(holder));
     yield* until(personHolding);
   });
 
-/** The person on `device` gives the tab back. */
-const givesBack = (tab: BrowserTabRef, device: DeviceId = PHONE) =>
+/** The person on `device`, their phone unless named, gives the tab back. */
+const givesBack = (tab: BrowserTabRef, device?: DeviceId) =>
   Effect.gen(function* () {
-    yield* (yield* controlOf(tab)).release(device, false);
+    const holder = device ?? (yield* operatorDevice("Phone"));
+    yield* (yield* controlOf(tab)).release(holder, false);
     yield* until(personHolding.pipe(Effect.map((holding) => !holding)));
   });
 
@@ -407,7 +407,7 @@ it.effect(
 it.effect("takes the same answer from two devices at once as one", () =>
   Effect.gen(function* () {
     const { bot, session, turnId, tab, card } = yield* askedScene;
-    yield* takes(tab, LAPTOP);
+    yield* takes(tab, yield* operatorDevice("Laptop"));
     yield* overdue;
 
     // Neither answer fails.
@@ -424,7 +424,7 @@ it.effect(
     Effect.gen(function* () {
       const { bot, session, turnId, tab } = yield* signInScene;
       // Using the page holds it, as touching it in a viewer does.
-      assert.isTrue(yield* (yield* Browser).personUsed(tab, PHONE));
+      assert.isTrue(yield* (yield* Browser).personUsed(tab, yield* operatorDevice("Phone")));
       yield* until(personHolding);
       yield* givesBack(tab);
       yield* until(browserHelpWakes.pipe(Effect.map((wakes) => wakes.length > 0)));

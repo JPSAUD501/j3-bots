@@ -4,7 +4,6 @@ import type { FakePageHost } from "@j3-bots/browser/testing";
 import {
   type BrowserFillField,
   type BrowserTabRef,
-  DeviceId,
   type FillOutcome,
   type SecretDraft,
   SecretId,
@@ -30,7 +29,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { Bots } from "../bots/Bots.ts";
 import { EngineSessions } from "../bots/EngineSessions.ts";
 import { Browser } from "../browser/Browser.ts";
-import { botOpens, TestServerBrowser } from "../testing/browser.ts";
+import { botOpens, operatorDevice, TestServerBrowser } from "../testing/browser.ts";
 import * as TestDomain from "../testing/domain.ts";
 import {
   awaitEntry,
@@ -376,7 +375,7 @@ describe("a fill refused by the page", () => {
   it.effect("refuses a tab a person holds, and fills it once they gave it back", () =>
     Effect.gen(function* () {
       const at = yield* scene({ url: LOGIN_URL });
-      const phone = DeviceId.make("device-phone");
+      const phone = yield* operatorDevice("Phone");
       const control = Option.getOrThrow(yield* (yield* Browser).handsOf(at.tab)).control;
       assert.isTrue(yield* control.waitForMe(phone));
       assert.deepStrictEqual(yield* fill(request(at, "password")), refusal("held"));

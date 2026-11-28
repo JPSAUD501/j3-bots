@@ -132,7 +132,7 @@ export interface NewBot {
   readonly permissionModeChooser: Chooser;
   readonly primary: boolean;
   readonly hidden: boolean;
-  /** Whether it may use the engine's browser. */
+  /** Whether it may use J3 Bots' browser. */
   readonly browser: boolean;
   /**
    * The bot whose `create_bot` makes it, whose choice its visibility then is;

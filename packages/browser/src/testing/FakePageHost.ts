@@ -238,6 +238,9 @@ export const makeFakePageHost = (
         return Effect.void;
       });
 
+    const privateTabs = () =>
+      [...tabs.values()].filter((tab) => tab.private).map((tab) => tab.state);
+
     const host: FakePageHost = {
       // Built at each call: the tabs and the store are the host's as they are now.
       hello: record("host.hello").pipe(
@@ -249,6 +252,7 @@ export const makeFakePageHost = (
           capabilities,
           ...(cookieStore === undefined ? {} : { cookieStore }),
           tabs: [...tabs.values()].filter((tab) => !tab.private).map((tab) => tab.state),
+          ...(privateTabs().length === 0 ? {} : { privateTabs: privateTabs() }),
         })),
       ),
       // Recorded once subscribed, so a test that waits for the call loses no event.

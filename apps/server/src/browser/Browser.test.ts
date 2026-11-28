@@ -9,14 +9,14 @@ import * as Option from "effect/Option";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import { TestServerBrowser } from "../testing/browser.ts";
+import { DeviceAuth } from "../auth/DeviceAuth.ts";
+import { operatorDevice, TestServerBrowser } from "../testing/browser.ts";
 import * as TestDomain from "../testing/domain.ts";
 import { createBot } from "../testing/turns.ts";
 import { Browser, DESKTOP_GRACE, SERVER_TAB_CAP } from "./Browser.ts";
 import { BOT_LEASE } from "./TabControl.ts";
 
 const laptop = DeviceId.make("device-laptop");
-const phone = DeviceId.make("device-phone");
 
 /** The tabs as the person sees them, once the list has caught up with `until`. */
 const tabsWhen = (until: (tabs: ReadonlyArray<SharedBrowserTab>) => boolean) =>
@@ -101,23 +101,32 @@ it.effect("keeps a desktop's tabs where they ran when it comes back within the g
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
-it.effect("shows the person's private tabs to them only, and forgets one once it closes", () =>
-  Effect.gen(function* () {
-    const browser = yield* Browser;
-    const bot = yield* createBot("Ana");
-    const { host } = yield* desktop(laptop);
-    const ref = BrowserTabRef.make("tab-private");
-    const page = yield* host.open({ tab: ref, private: true, background: false });
-    yield* host.emit({ type: "tab.opened", page, opener: null, private: true });
-    const all = yield* tabsWhen((tabs) => tabs.some((tab) => tab.ref === ref));
-    assert.isTrue(all.find((tab) => tab.ref === ref)?.private);
-    assert.deepStrictEqual(yield* browser.tools.tabs(bot.id), []);
-    const refused = yield* browser.tools.snapshot(bot.id, { tab: ref }).pipe(Effect.flip);
-    assert.strictEqual(refused.text, BROWSER_NOTES.noTab(ref));
+it.effect(
+  "shows the person's private tabs to them only, through a reconnect, and forgets one once it closes",
+  () =>
+    Effect.gen(function* () {
+      const browser = yield* Browser;
+      const bot = yield* createBot("Ana");
+      const { host, attached } = yield* desktop(laptop);
+      const ref = BrowserTabRef.make("tab-private");
+      const page = yield* host.open({ tab: ref, private: true, background: false });
+      yield* host.emit({ type: "tab.opened", page, opener: null, private: true });
+      const all = yield* tabsWhen((tabs) => tabs.some((tab) => tab.ref === ref));
+      assert.isTrue(all.find((tab) => tab.ref === ref)?.private);
+      assert.deepStrictEqual(yield* browser.tools.tabs(bot.id), []);
+      const refused = yield* browser.tools.snapshot(bot.id, { tab: ref }).pipe(Effect.flip);
+      assert.strictEqual(refused.text, BROWSER_NOTES.noTab(ref));
 
-    yield* host.emit({ type: "tab.closed", tab: ref, crashed: false });
-    yield* tabsWhen((tabs) => !tabs.some((tab) => tab.ref === ref));
-  }).pipe(Effect.provide(TestDomain.layer)),
+      // A reconnect keeps it: the host lists its private tabs apart.
+      yield* Scope.close(attached, Exit.void);
+      yield* attach(host);
+      yield* TestClock.adjust(DESKTOP_GRACE);
+      const again = yield* tabsWhen((tabs) => tabs.some((tab) => tab.ref === ref));
+      assert.isTrue(again.find((tab) => tab.ref === ref)?.private);
+
+      yield* host.emit({ type: "tab.closed", tab: ref, crashed: false });
+      yield* tabsWhen((tabs) => !tabs.some((tab) => tab.ref === ref));
+    }).pipe(Effect.provide(TestDomain.layer)),
 );
 
 it.effect(
@@ -127,6 +136,7 @@ it.effect(
       const browser = yield* Browser;
       const bot = yield* createBot("Ana");
       const ref = yield* open(bot.id, "https://shop.example.test/");
+      const phone = yield* operatorDevice("Phone");
       assert.isTrue(yield* browser.personUsed(ref, phone));
       const refused = yield* browser.tools
         .act(bot.id, ref, { action: "press", key: "Enter" })
@@ -135,7 +145,7 @@ it.effect(
       const read = yield* browser.tools.snapshot(bot.id, { tab: ref }).pipe(Effect.orDie);
       assert.strictEqual(read.url, "https://shop.example.test/");
       // Another device's input is not the holder's.
-      assert.isFalse(yield* browser.personUsed(ref, laptop));
+      assert.isFalse(yield* browser.personUsed(ref, yield* operatorDevice("Laptop")));
     }).pipe(Effect.provide(TestDomain.layer)),
 );
 
@@ -168,5 +178,20 @@ it.effect("tells a bot that no browser can run its tab when the server's cannot 
       yield* browser.serverProblem.pipe(Stream.runHead, Effect.map(Option.flatten)),
       Option.some("sandbox"),
     );
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("ends a person's wait for me once the device that holds it is revoked", () =>
+  Effect.gen(function* () {
+    const browser = yield* Browser;
+    const bot = yield* createBot("Ana");
+    const ref = yield* open(bot.id, "https://shop.example.test/");
+    const phone = yield* operatorDevice("Phone");
+    const control = Option.getOrThrow(yield* browser.handsOf(ref)).control;
+    assert.isTrue(yield* control.waitForMe(phone));
+    yield* tabsWhen((tabs) => tabs.some((tab) => tab.ref === ref && tab.heldBy !== null));
+
+    yield* (yield* DeviceAuth).revoke(phone);
+    yield* tabsWhen((tabs) => tabs.some((tab) => tab.ref === ref && tab.heldBy === null));
   }).pipe(Effect.provide(TestDomain.layer)),
 );

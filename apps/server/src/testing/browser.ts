@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { type FakePageHost, makeFakePageHost } from "@j3-bots/browser/testing";
-import type { BotId, BrowserTabRef } from "@j3-bots/contracts";
+import type { BotId, BrowserTabRef, DeviceId } from "@j3-bots/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -9,6 +9,7 @@ import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import { Browser } from "../browser/Browser.ts";
 import { ServerBrowser, ServerBrowserUnavailable } from "../browser/server/ServerBrowser.ts";
+import { Devices } from "../devices/Devices.ts";
 
 /** The server's browser in tests: a fake page host, started like the real one. */
 export class TestServerBrowser extends Context.Service<
@@ -61,4 +62,25 @@ export const botOpens = (botId: BotId, url: string) =>
     const browser = yield* Browser;
     const opened = yield* browser.tools.open(botId, { url }).pipe(Effect.orDie);
     return opened.tab satisfies BrowserTabRef;
+  });
+
+/** The devices each test's server paired through `operatorDevice`, by name. */
+const pairedByServer = new WeakMap<Devices["Service"], Map<string, DeviceId>>();
+
+/**
+ * The operator's device called `name`, paired the first time a test's server
+ * is asked for it. A person holds a tab from a paired device: a hold from a
+ * device the server does not know ends at once, as a revoked one's does.
+ */
+export const operatorDevice = (name: string) =>
+  Effect.gen(function* () {
+    const devices = yield* Devices;
+    const paired = pairedByServer.get(devices) ?? new Map<string, DeviceId>();
+    pairedByServer.set(devices, paired);
+    const known = paired.get(name);
+    if (known !== undefined) return known;
+    const { code } = yield* devices.startPairing;
+    const { deviceId } = yield* devices.pair({ code, name }).pipe(Effect.orDie);
+    paired.set(name, deviceId);
+    return deviceId;
   });

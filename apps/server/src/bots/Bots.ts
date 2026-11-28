@@ -37,6 +37,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import { Attachments } from "../attachments/Attachments.ts";
+import { Browser } from "../browser/Browser.ts";
 import { CommandReceipts } from "../commands/CommandReceipts.ts";
 import { defaultModelIn, EngineState, providerReady } from "../engine/EngineState.ts";
 import { Ids } from "../Ids.ts";
@@ -276,6 +277,7 @@ export const layer = Layer.effect(
     const stops = yield* Stops;
     const wakes = yield* Wakes;
     const ledger = yield* Ledger;
+    const browser = yield* Browser;
     const { requestBotRotation, providerRestored, forgetConversation } = rotationRequests(
       sql,
       signals,
@@ -461,6 +463,10 @@ export const layer = Layer.effect(
             if (change.primary === true && !before.bot.primary) yield* makePrimary(at);
             yield* store.update(input.botId, change, at, input.chooser);
             yield* settingsChanged;
+            // Off, its browser takes it out of every tab once the change is saved.
+            if (change.browser === false && before.bot.browser) {
+              yield* sql.afterCommit(browser.withdraw(input.botId));
+            }
             // Compared with the provider the bot's live main session runs on, in
             // this transaction: an earlier change may not have reached it yet.
             // Moving to another provider stops the work in progress before the
@@ -872,6 +878,7 @@ export const layer = Layer.effect(
               yield* attachments.purge(carried);
               yield* changes.touch({ _tag: "bot", botId: input.botId });
               yield* sql.afterCommit(workspaces.remove(input.botId, input.deleteFiles));
+              yield* sql.afterCommit(browser.withdraw(input.botId));
             }),
           });
         }),

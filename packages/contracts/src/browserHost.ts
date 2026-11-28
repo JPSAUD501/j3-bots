@@ -259,6 +259,12 @@ export const BrowserHostHello = Schema.Struct({
    * with its registry. A private tab is not among them.
    */
   tabs: Schema.Array(BrowserPageState),
+  /**
+   * The private tabs the host holds now, apart from `tabs`, so the server
+   * keeps showing them to the person after a reconnect or its own restart.
+   * No bot lists or reads them. Left out, the host holds none.
+   */
+  privateTabs: Schema.optionalKey(Schema.Array(BrowserPageState)),
 });
 export type BrowserHostHello = typeof BrowserHostHello.Type;
 
