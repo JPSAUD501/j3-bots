@@ -19,6 +19,7 @@ import {
   useRoutineRuns,
   useRoutines,
   useSettings,
+  useSignIns,
 } from "@j3-bots/client-runtime/react";
 import type {
   AvatarChoice,
@@ -980,6 +981,7 @@ function LiveShell({
   if (settingsOpen && (roster === null || roster.length === 0)) setSettingsOpen(false);
   // Read each time Settings shows its usage, and on every socket while it does.
   const recentTurns = useRecentTurns(settingsOpen && settingsPage === "usage");
+  const browserSignIns = useSignIns(settingsOpen && settingsPage === "browser");
   // What the shell shows with nothing over it.
   const [shown, setShown] = useState<EntryTarget | null>(null);
   const botSaves = useReadable(j3.botSaves);
@@ -1330,6 +1332,7 @@ function LiveShell({
     settingsPage,
     devices: devices._tag === "ready" ? devices.value : null,
     recentTurns: recentTurns.state,
+    browserSignIns,
     connected: connection._tag === "connected",
     signInUnencrypted: storedUnencrypted,
   };
@@ -1642,6 +1645,7 @@ function LiveShell({
         ),
     revokeDevice: (deviceId) => j3.revokeDevice(deviceId).then((result) => result._tag === "done"),
     refreshSettings: j3.refreshSettings,
+    signOutSite: (site) => j3.signOutSite(site).then((result) => result._tag === "done"),
     signOutBrowser: () => j3.signOutBrowser().then((result) => result._tag === "done"),
     usageData: {
       sent: () =>

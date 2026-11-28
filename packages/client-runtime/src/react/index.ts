@@ -28,6 +28,7 @@ import type {
   ConversationHandle,
   J3Client,
   PairHandle,
+  SignInsHandle,
   UsageHandle,
   WorkStepsHandle,
 } from "../client.ts";
@@ -38,6 +39,7 @@ import { type ConversationState, type Revealed, targetKey } from "../stores/Conv
 import type { Draft } from "../stores/Drafts.ts";
 import type { RoutineRuns } from "../stores/Details.ts";
 import type { Loaded } from "../stores/reads.ts";
+import type { SignInsState } from "../stores/Settings.ts";
 import type { PairConversationState } from "../stores/TeammatePairs.ts";
 import { pairKeyText } from "../presentation/pairs.ts";
 import { type RecentTurnsState, turnsNotRead } from "../stores/Usage.ts";
@@ -263,6 +265,17 @@ export const usePair = (
 export const useWorkSteps = (foldId: EntryId): WorkStepsState | null => {
   const handle: WorkStepsHandle | null = useHeld(foldId, same, (client, id) =>
     client.openWorkSteps(id),
+  );
+  return useHeldState(handle);
+};
+
+/**
+ * The sites the person is signed in to in J3 Bots' browser, followed while
+ * `held`; `null` for the first render and while not held.
+ */
+export const useSignIns = (held: boolean): SignInsState | null => {
+  const handle: SignInsHandle | null = useHeld(held ? "signIns" : null, same, (client) =>
+    client.openSignIns(),
   );
   return useHeldState(handle);
 };

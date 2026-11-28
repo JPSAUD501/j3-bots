@@ -6,3 +6,4 @@ export {
   type FakePageHost,
   makeFakePageHost,
 } from "./FakePageHost.ts";
+export { TEST_PROFILE_SITES, writeTestProfile } from "./profiles.ts";

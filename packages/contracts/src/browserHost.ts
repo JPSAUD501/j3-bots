@@ -35,7 +35,7 @@ import { FillField } from "./secrets.ts";
 // least 128 bits of randomness, and the server keeps it.
 
 /** Bumped when a change would break a host and a server built a version apart. */
-export const BROWSER_HOST_PROTOCOL_VERSION = 1;
+export const BROWSER_HOST_PROTOCOL_VERSION = 2;
 
 // ---------------------------------------------------------------------------
 // Sign-ins: cookies and site storage
@@ -90,8 +90,12 @@ export const BrowserCookieKey = Schema.Struct({
   domain: Schema.String.check(Schema.isMinLength(1)),
   hostOnly: Schema.Boolean,
   path: Schema.String,
-  /** The partition's `topLevelSite`, for a partitioned cookie. */
-  partition: Schema.optionalKey(Schema.String),
+  /**
+   * The partition, whole, for a partitioned cookie: Chromium keeps one cookie
+   * apart from another of the same name under the same top-level site when
+   * their `hasCrossSiteAncestor` differs.
+   */
+  partition: Schema.optionalKey(BrowserCookiePartition),
 });
 export type BrowserCookieKey = typeof BrowserCookieKey.Type;
 
@@ -151,6 +155,12 @@ export const BrowserOriginStorage = Schema.Struct({
 });
 export type BrowserOriginStorage = typeof BrowserOriginStorage.Type;
 
+/** What `storage.write` did: the origins it left as they were, to be written again. */
+export const BrowserStorageWritten = Schema.Struct({
+  waiting: Schema.optionalKey(Schema.Array(Schema.String)),
+});
+export type BrowserStorageWritten = typeof BrowserStorageWritten.Type;
+
 // ---------------------------------------------------------------------------
 // Typing a saved login
 
@@ -197,7 +207,8 @@ export const MAX_BROWSER_FILL_LENGTH = 10_000;
  * so a newer host's flags pass an older server by.
  *
  * - `screencast`, `input`: a viewer can watch and drive its tabs.
- * - `cookies`, `storage`, `indexedDb`: it reads and writes sign-ins.
+ * - `cookies`, `storage`, `indexedDb`: it reads and writes sign-ins;
+ *   `indexedDb`, origins' databases too (`storage.read`, `storage.write`).
  * - `files`: it hands the server a file a bot's action downloaded
  *   (`download.finished`, `download.take`) and takes files for a bot's
  *   upload (`files.put`).
@@ -252,6 +263,16 @@ export const BrowserHostHello = Schema.Struct({
    * it lacks is removed from the others.
    */
   cookieStore: Schema.optionalKey(
+    Schema.String.check(Schema.isMinLength(16), Schema.isMaxLength(200)),
+  ),
+  /**
+   * Names this run of the host's browser: a random id the host mints each
+   * time its browser starts. A session cookie the store held and the host
+   * lacks is taken as lost to a restart only when the run is another than
+   * the one the server last agreed with, or is not named; under the same
+   * run, a missing cookie is one the site removed.
+   */
+  browserRun: Schema.optionalKey(
     Schema.String.check(Schema.isMinLength(16), Schema.isMaxLength(200)),
   ),
   /**
@@ -626,15 +647,43 @@ export const BrowserHostRpcs = RpcGroup.make(
     payload: { changes: BrowserCookieChanges },
     error: BrowserHostError,
   }),
-  /** Reads origins' storage; `indexedDb` adds their databases. */
+  /**
+   * Reads origins' storage; `indexedDb` adds their databases. An origin whose
+   * databases hold a value `BrowserIndexedDb` cannot carry (a `CryptoKey`, a
+   * `Blob`) comes back without `indexedDb`: not read, rather than read wrong.
+   */
   Rpc.make("storage.read", {
     payload: { origins: Schema.Array(Schema.String), indexedDb: Schema.Boolean },
     success: Schema.Struct({ origins: Schema.Array(BrowserOriginStorage) }),
     error: BrowserHostError,
   }),
-  /** Replaces each given origin's `localStorage`, and its databases where given. */
+  /**
+   * Replaces each given origin's `localStorage`, and its databases where
+   * given. `waiting` names the origins it wrote nothing of: their databases
+   * needed a version change that a page of the origin may hold back, so the
+   * host waits for none and the server writes them again later. Every other
+   * origin given was written.
+   */
   Rpc.make("storage.write", {
     payload: { origins: Schema.Array(BrowserOriginStorage) },
+    success: BrowserStorageWritten,
+    error: BrowserHostError,
+  }),
+  /**
+   * Deletes what the shared sign-ins' store keeps for these origins, or for
+   * every origin, besides cookies: `localStorage`, IndexedDB, cache storage,
+   * service workers and the rest of their site data. Each open tab of them
+   * loses its `sessionStorage` too, and a tab whose page is of one of them
+   * loads again, so no page keeps a sign-in in its memory. For signing out:
+   * a host with `storage` takes it. The host reports none of it back.
+   */
+  Rpc.make("storage.clear", {
+    payload: {
+      clear: Schema.Union([
+        Schema.Struct({ origins: Schema.Array(Schema.String) }),
+        Schema.Struct({ all: Schema.Literal(true) }),
+      ]),
+    },
     error: BrowserHostError,
   }),
 );

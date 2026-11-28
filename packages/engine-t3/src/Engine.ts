@@ -548,11 +548,6 @@ export class Engine extends Context.Service<
     readonly removeProject: (projectId: EngineProjectId) => Effect.Effect<void, EngineDown>;
 
     /**
-     * Signs the engine's browser out of every site: deletes the cookies and
-     * site data of the one browser profile every session uses. Tabs open in
-     * it close.
-     */
-    readonly clearBrowserProfile: Effect.Effect<void, EngineDown>;
 
     /**
      * A new, idle session in the project. `key` is written by the server

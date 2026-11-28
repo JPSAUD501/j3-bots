@@ -6,3 +6,8 @@ export * from "./events.ts";
 export * from "./ids.ts";
 export * from "./input.ts";
 export * from "./toolCaller.ts";
+export {
+  type OldEngineBrowser,
+  oldEngineBrowser,
+  removeOldEngineBrowser,
+} from "./t3/OldBrowser.ts";

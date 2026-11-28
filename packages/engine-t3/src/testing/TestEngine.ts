@@ -319,8 +319,6 @@ export class TestEngineControl extends Context.Service<
     readonly sessionFast: (sessionId: SessionId) => Effect.Effect<boolean>;
     /** The permission mode a session runs, as it was opened or last configured. */
     readonly sessionPermissionMode: (sessionId: SessionId) => Effect.Effect<PermissionMode>;
-    /** How many times the browser profile was cleared. */
-    readonly browserProfileClears: Effect.Effect<number>;
     /**
      * The engine refuses the next `stop` it receives, applying nothing and
      * keeping a rejected receipt, as when a read fails while it plans the
@@ -836,7 +834,6 @@ const make = Effect.gen(function* () {
   let sequence = 0;
   let nextId = 0;
   const projects = new Map<string, EngineProjectId>();
-  let browserProfileClears = 0;
   const sessions = new Map<SessionId, SessionRecord>();
   const keys = new Map<IdempotencyKey, AppliedKey>();
   /** Each staged file, with its `usableUntil`. */
@@ -1607,8 +1604,6 @@ const make = Effect.gen(function* () {
         }),
       ),
 
-    clearBrowserProfile: command(Effect.sync(() => void browserProfileClears++)),
-
     openSession: ({ key, projectId, model, effort, fast, permissionMode }) =>
       command(
         Effect.gen(function* () {
@@ -2252,8 +2247,6 @@ const make = Effect.gen(function* () {
           ? misuse(`no session ${sessionId}`)
           : Effect.succeed(session.permissionMode);
       }),
-
-    browserProfileClears: Effect.sync(() => browserProfileClears),
 
     rejectNextStop: Effect.sync(() => {
       rejectStop = true;

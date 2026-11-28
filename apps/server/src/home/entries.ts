@@ -33,6 +33,12 @@ export const HOME_ENTRIES = {
    * rolls back. Named for the vault it held before 0.9.0.
    */
   secrets: "vault",
+  /**
+   * J3 Bots' own browser: the shared sign-ins (`browser/signins.sqlite`),
+   * sealed under a key of the secrets', and the server's browser binary.
+   * In no snapshot and no export.
+   */
+  browser: "browser",
   adminSocket: "admin.sock",
   /** Held by the one server running for the home. */
   lock: "server.lock",
@@ -94,6 +100,7 @@ export const SYSTEM_PROMPT_FILE = `${WORKSPACE_ENTRIES.generated}/system.md`;
  * backups/<snapshot>/    the databases and settings an update copied first
  * vault/vault.sqlite     the sealed secrets and connector secrets; in no snapshot
  * vault/key              the key they are sealed under; in no snapshot
+ * browser/signins.sqlite the browser's shared sign-ins, sealed; in no snapshot or export
  * providers/<provider>/  the configuration folder of an engine provider instance
  * harnesses/<provider>/  J3 Bots' own copy of the provider's harness (`harnesses/layout.ts`)
  * web/                   where the operator may put a built web client; public
@@ -116,6 +123,7 @@ export const homeLayout = (path: Path.Path, home: string) => {
     providerHome: (provider: string) => path.join(home, HOME_ENTRIES.providers, provider),
     harnessCopy: (provider: (typeof PROVIDER_HOMES)[number]) =>
       path.join(home, HOME_ENTRIES.harnesses, provider),
+    browser: path.join(home, HOME_ENTRIES.browser),
     /**
      * Every location the server writes, for a home whose bots are `bots`:
      * each entry of the home but `web`, the shared folders, the provider
@@ -137,6 +145,7 @@ export const homeLayout = (path: Path.Path, home: string) => {
         attachments,
         backups,
         secrets,
+        browser,
         adminSocket,
         lock,
       } = HOME_ENTRIES;
@@ -157,6 +166,7 @@ export const homeLayout = (path: Path.Path, home: string) => {
           attachments,
           backups,
           secrets,
+          browser,
           adminSocket,
           lock,
         ].map((entry) => path.join(home, entry)),

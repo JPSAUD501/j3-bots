@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type {
+  BrowserSite,
   ClientTelemetryEvent,
   SentTelemetryEvent,
   Attachment,
@@ -237,6 +238,11 @@ export interface PairHandle {
    */
   readonly reveal: (entryId: EntryId) => Promise<PairSeq | null>;
   /** Lets go of the conversation. Its subscription ends when nobody else holds it. */
+  readonly release: () => void;
+}
+
+export interface SignInsHandle {
+  readonly state: Readable<Settings.SignInsState>;
   readonly release: () => void;
 }
 
@@ -700,7 +706,11 @@ export interface J3Client {
   ) => Promise<Actions.IntentResult<SettingsValue>>;
   /** Reads the settings again, as when Settings opens. */
   readonly refreshSettings: () => void;
-  /** Signs the bots' browser out of every site, for every bot. */
+  /** The sites the person is signed in to in J3 Bots' browser, followed while held. */
+  readonly openSignIns: () => SignInsHandle;
+  /** Signs J3 Bots' browser out of one site, for the person and every bot. */
+  readonly signOutSite: (site: BrowserSite) => Promise<Actions.IntentResult>;
+  /** Signs J3 Bots' browser out of every site, for the person and every bot. */
   readonly signOutBrowser: () => Promise<Actions.IntentResult>;
   /** See `UsageData.record`: something only this client sees, told while usage data is on. */
   readonly recordUsage: (event: ClientTelemetryEvent) => void;
@@ -1200,6 +1210,11 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
 
     updateSettings: (change) => run.promise(services.settings.update(change)),
     refreshSettings: () => fire(services.settings.refresh),
+    openSignIns: () => {
+      const { value, release } = hold(services.settings.openSignIns);
+      return { state: value, release };
+    },
+    signOutSite: (site) => run.promise(services.settings.signOutSite(site)),
     signOutBrowser: () => run.promise(services.settings.signOutBrowser),
     recordUsage: (event) => fire(services.usageData.record(event)),
     usageDataSent: () => run.promise(services.usageData.sent),

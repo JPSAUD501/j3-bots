@@ -41,7 +41,7 @@ A bot can open pages, read them and act in them in J3 Bots' own browser: the J3 
 
 Every new bot can browse the web. In the bot's details, **Browser: Can browse the web** turns it off, or on again. Bots made before 0.15.0 keep the switch they had: turn it on for those that should browse. Turning it on applies from the bot's next turn. Turning it off takes effect at once: the bot loses its browser tools, and a call it still makes is refused, but the rest of what it is doing goes on.
 
-**Every bot with the switch on uses the same browser profile**, so wherever you, or one of those bots, signs in there, all of them are signed in. On those sites a bot acts as you. The browser starts signed out of every site, and a bot that meets a sign-in asks you for it: sign in there only on sites every bot with the browser may use, and turn the browser off for bots that should not.
+**Every bot with the switch on shares your sign-ins**: wherever you, or one of those bots, signs in, in any tab of J3 Bots' browser, on any of your computers or on the server, all of them are signed in. On those sites a bot acts as you. The browser starts signed out of every site, and a bot that meets a sign-in asks you for it: sign in there only on sites every bot with the browser may use, and turn the browser off for bots that should not.
 
 ### What the machine needs
 
@@ -83,9 +83,11 @@ A bot that meets a check that a person is there, a sign-in it has no login for, 
 
 A card nobody answers expires: when its page has been gone for two minutes, or after an hour in which no device holds the bot's pages. The bot is told which.
 
-### Sign out of every site
+### See and sign out of sites
 
-**Settings → Secrets → Bots' browser → Sign out of all sites** deletes the profile every bot's browser uses: every session in it ends, for every bot, and its open pages close.
+**Settings → Browser** lists the sites you're signed in to in J3 Bots' browser. Your bots use those sign-ins too. **Sign out** beside a site signs you out of it, and out of its subdomains, everywhere: in the server's browser and on every computer, at once on those connected and first thing on one that connects later. **Sign out of all sites**, at the end, does it for every site, and asks first. Open tabs stay open, signed out.
+
+The sign-ins are kept on the server, sealed under the secrets' key ([Server: sign-ins](../architecture/server.md#sign-ins)). If that key changes, they can't be opened: the page says so, and **Sign out of all sites** starts them again, empty. Sign in again where you need to.
 
 ## Connectors
 
@@ -149,6 +151,6 @@ When a bot finds its connector signed out, it shows a card in its conversation t
 
 [Operating](operating.md) has the commands. What changes with these three:
 
-- **The browser's profile is left out of the backup** command: it holds live sessions for every site you signed in to. After a restore, sign in again. A rollback leaves it as it is, though going back to an older browser may sign you out of everything.
+- **The browser's sign-ins are in the backup, sealed under the secrets' key**: restored with the key file, you stay signed in where you were. What the engine's browser kept before 0.16 is in the clear, so the backup command leaves it out until 0.16 has moved it. An update's rollback leaves the sign-ins as they are, and moving to another server with `export` and `import` leaves them behind: sign in again there.
 - **The secrets are in the backup, sealed, without their key**: the backup command copies the key file on its own, to keep apart from the archive. Restored with it, they come back as they were. A service that replaces its sign-in each time it is renewed may refuse the one in an older backup (**Assumed**); sign that connector in again.
 - **An update's rollback never touches the secrets.** Logins, values and connectors' sign-ins stay as they are. Connectors themselves are in the database a rollback puts back: one added after the update is gone after the rollback, and is added again.

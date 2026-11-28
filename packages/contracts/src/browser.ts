@@ -165,6 +165,43 @@ export const BrowserTabs = Schema.Struct({ tabs: Schema.Array(BrowserTab) });
 export type BrowserTabs = typeof BrowserTabs.Type;
 
 // ---------------------------------------------------------------------------
+// Sign-ins
+
+/**
+ * A site, as the person signs in to it: its registrable domain in ASCII
+ * ("example.co.uk", "xn--bcher-kva.example"), without a scheme or a port.
+ */
+export const BrowserSite = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(253));
+export type BrowserSite = typeof BrowserSite.Type;
+
+/**
+ * The sites the person is signed in to in J3 Bots' browser, which every bot
+ * that may browse uses too: the sites a shared tab showed as its page whose
+ * cookies or storage the shared sign-ins hold. With another status the list
+ * is empty, and nothing is signed out because of it:
+ *
+ * - `unreadable`: the sign-ins do not open under the secrets' key (another
+ *   key, or a damaged file). Signing out of all sites starts them again.
+ * - `locked`: the secrets cannot be read now, so neither can the sign-ins.
+ *   Nothing can be signed out until they can.
+ */
+export const BrowserSignIns = Schema.Struct({
+  status: Schema.Literals(["ready", "unreadable", "locked"]),
+  sites: Schema.Array(
+    Schema.Struct({
+      site: BrowserSite,
+      /**
+       * An origin of the site keeps more in IndexedDB than the sign-ins
+       * carry between browsers: its cookies and `localStorage` still go to
+       * every browser, its databases stay where they are.
+       */
+      tooBig: Schema.optionalKey(Schema.Literal(true)),
+    }),
+  ),
+});
+export type BrowserSignIns = typeof BrowserSignIns.Type;
+
+// ---------------------------------------------------------------------------
 // The media socket
 
 /** The largest picture a viewer may ask for, in device pixels. */

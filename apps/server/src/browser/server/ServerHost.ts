@@ -11,17 +11,25 @@ import {
   BrowserHostError,
   type BrowserHostEvent,
   type BrowserHostHello,
+  BrowserIndexedDb,
   type BrowserOriginStorage,
+  type BrowserStorageWritten,
   BrowserTabRef,
   MAX_ATTACHMENT_NAME_LENGTH,
   MAX_ATTACHMENT_SIZE,
 } from "@j3-bots/contracts";
 import {
+  cdpParamOf,
+  cdpRemovalOf,
+  cookieOfCdp,
   type DriverPage,
   driverTabCalls,
   hostErrorOf,
   makeDriverPage,
   type PageHost,
+  type PageHostPayload,
+  readDatabases,
+  replaceDatabases,
 } from "@j3-bots/browser";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -29,6 +37,7 @@ import * as Encoding from "effect/encoding/Hex";
 import * as Exit from "effect/Exit";
 import * as FiberSet from "effect/FiberSet";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Random from "effect/Random";
@@ -44,7 +53,39 @@ import {
   type Page,
 } from "playwright-core";
 import { CHROME_VERSION, type ChromePlatform } from "./chrome.ts";
-import { CdpCookies, fromCdp, removalOf, toCdp } from "./cookies.ts";
+
+/** Cookies as `Storage.getCookies` answers, each read by the shared mapping. */
+const CdpCookies = Schema.Struct({ cookies: Schema.Array(Schema.Unknown) });
+
+/** An origin's databases as a page of it read them, or that it could not. */
+const decodeDatabasesRead = Schema.decodeUnknownEffect(
+  Schema.Union([
+    Schema.Struct({ readable: Schema.Literal(true), databases: Schema.Array(BrowserIndexedDb) }),
+    Schema.Struct({ readable: Schema.Literal(false) }),
+  ]),
+);
+
+/** What signing out clears of an origin besides cookies, as `Storage.clearDataForOrigin` names it. */
+const CLEARED_STORAGE = [
+  "local_storage",
+  "indexeddb",
+  "cache_storage",
+  "service_workers",
+  "file_systems",
+  "websql",
+  "shared_storage",
+  "storage_buckets",
+].join(",");
+
+/** An address's origin, for http and https alone. */
+const webOriginOf = (url: string): string | undefined => {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "http:" || parsed.protocol === "https:" ? parsed.origin : undefined;
+  } catch {
+    return undefined;
+  }
+};
 
 /** The page size every server tab has, in CSS pixels: a laptop's. */
 const VIEWPORT = { width: 1280, height: 800 } as const;
@@ -239,6 +280,8 @@ export const launchServerHost = (input: {
     const opening = new Map<BrowserTabRef, Deferred.Deferred<DriverPage, BrowserHostError>>();
     /** Downloads reported and not taken yet. */
     const downloads = new Map<BrowserDownloadId, Download>();
+    /** Every origin a frame of a tab showed, which signing out of all sites clears. */
+    const shownOrigins = new Set<string>();
     /** Runs a page's callback's work in the host's scope. */
     const run = yield* FiberSet.makeRuntime<never>();
 
@@ -273,6 +316,10 @@ export const launchServerHost = (input: {
         Stream.runForEach((state) => publish({ type: "tab.changed", page: state })),
         Effect.forkIn(scope),
       );
+      page.on("framenavigated", (frame) => {
+        const origin = webOriginOf(frame.url());
+        if (origin !== undefined) shownOrigins.add(origin);
+      });
       // A page this one opens, as a sign-in's pop-up, is a tab of its own,
       // kept on this browser, since it needs its opener.
       page.on("popup", (popup) => {
@@ -383,11 +430,13 @@ export const launchServerHost = (input: {
           ),
         ),
       ),
-      Effect.map(({ cookies }) => ({ cookies: cookies.map(fromCdp) })),
+      Effect.map(({ cookies }) => ({
+        cookies: cookies.flatMap((cookie) => Option.toArray(cookieOfCdp(cookie))),
+      })),
     );
 
     const writeCookies = (changes: BrowserCookieChanges) => {
-      const params = [...changes.set.map(toCdp), ...changes.removed.map(removalOf)];
+      const params = [...changes.set.map(cdpParamOf), ...changes.removed.map(cdpRemovalOf)];
       return params.length === 0
         ? Effect.void
         : send(() =>
@@ -400,47 +449,163 @@ export const launchServerHost = (input: {
 
     /**
      * Runs `use` in a page of `origin` that no site's code runs in: every
-     * request it makes is answered with an empty page. What it reads and
-     * writes is the origin's own storage.
+     * request it makes is answered with an empty page, past any service
+     * worker of the origin, which would otherwise answer it before the route
+     * (**Assumed**: `Network.setBypassServiceWorker` covers the navigation).
+     * What it reads and writes is the origin's own storage. A call that is
+     * interrupted, as one past its time is, closes the page, and what runs in
+     * it stops.
      */
-    const inProbe = <A>(origin: string, use: (page: Page) => Promise<A>) =>
-      send(async () => {
-        const page = await context.newPage();
-        try {
-          await page.route("**/*", (route) =>
-            route.fulfill({ status: 200, contentType: "text/html", body: "<!doctype html>" }),
-          );
-          await page.goto(new URL("/", origin).toString(), { waitUntil: "domcontentloaded" });
-          return await use(page);
-        } finally {
-          await page.close();
-        }
+    const inProbe = <A>(origin: string, use: (page: Page, cdp: CDPSession) => Promise<A>) =>
+      Effect.tryPromise({
+        try: async (signal) => {
+          const page = await context.newPage();
+          const close = () => {
+            void page.close().catch(() => undefined);
+          };
+          signal.addEventListener("abort", close, { once: true });
+          try {
+            const cdp = await context.newCDPSession(page);
+            await cdp.send("Network.enable");
+            await cdp.send("Network.setBypassServiceWorker", { bypass: true });
+            await page.route("**/*", (route) =>
+              route.fulfill({ status: 200, contentType: "text/html", body: "<!doctype html>" }),
+            );
+            await page.goto(new URL("/", origin).toString(), { waitUntil: "domcontentloaded" });
+            return await use(page, cdp);
+          } finally {
+            signal.removeEventListener("abort", close);
+            await page.close();
+          }
+        },
+        catch: hostErrorOf,
       });
 
-    const readStorage = (input: { readonly origins: ReadonlyArray<string> }) =>
+    /** Whether a frame of a tab shows `origin`, so a page of it may hold its databases open. */
+    const showsOrigin = (origin: string) =>
+      [...tabs.values()].some(({ driver }) =>
+        driver.page.frames().some((frame) => webOriginOf(frame.url()) === origin),
+      );
+
+    /**
+     * Each origin's `localStorage`, and its databases when `indexedDb`: every
+     * record of them, in the shape Playwright's `storageState` gives, read in
+     * the probe. An origin whose databases hold a value that shape cannot
+     * carry comes back without them.
+     */
+    const readStorage = (input: PageHostPayload<"storage.read">) =>
       Effect.forEach(input.origins, (origin) =>
-        inProbe(origin, (page) =>
-          page.evaluate(() =>
+        inProbe(origin, async (page) => ({
+          localStorage: await page.evaluate(() =>
             Object.keys(localStorage).map((name) => ({
               name,
               value: localStorage.getItem(name) ?? "",
             })),
           ),
-        ).pipe(Effect.map((localStorage): BrowserOriginStorage => ({ origin, localStorage }))),
+          databases: input.indexedDb ? await page.evaluate(readDatabases) : undefined,
+        })).pipe(
+          Effect.flatMap(({ localStorage, databases }) =>
+            databases === undefined
+              ? Effect.succeed<BrowserOriginStorage>({ origin, localStorage })
+              : decodeDatabasesRead(databases).pipe(
+                  Effect.mapError(
+                    () => new BrowserHostError({ reason: "page", detail: "Unreadable databases." }),
+                  ),
+                  Effect.map((read): BrowserOriginStorage =>
+                    read.readable
+                      ? { origin, localStorage, indexedDb: read.databases }
+                      : { origin, localStorage },
+                  ),
+                ),
+          ),
+        ),
       ).pipe(Effect.map((origins) => ({ origins })));
 
+    /**
+     * Replaces each origin's `localStorage`, and its databases where given,
+     * from the probe. Databases that differ only in their records are filled
+     * again in place, past a tab of the origin that holds them open. One that
+     * must be deleted, or opened at another version, waits until no tab
+     * shows the origin, so no page of it can hold the change back: until
+     * then nothing of the origin is written, it is answered `waiting`, and
+     * the sign-ins write it again later. Before that change the origin's
+     * service workers are stopped, as they may hold one open too
+     * (**Assumed**: nothing else of a context does).
+     */
     const writeStorage = (origins: ReadonlyArray<BrowserOriginStorage>) =>
-      Effect.forEach(
-        origins,
-        (stored) =>
-          inProbe(stored.origin, (page) =>
-            page.evaluate((items) => {
-              localStorage.clear();
-              for (const item of items) localStorage.setItem(item.name, item.value);
-            }, stored.localStorage),
-          ),
+      Effect.forEach(origins, (stored) =>
+        inProbe(stored.origin, async (page, cdp) => {
+          const databases = stored.indexedDb;
+          if (databases !== undefined) {
+            const written = await page.evaluate(replaceDatabases, {
+              databases,
+              versionChanges: false,
+            });
+            if (written === "version-change") {
+              if (showsOrigin(stored.origin)) return "waiting";
+              await cdp.send("ServiceWorker.enable");
+              await cdp.send("ServiceWorker.stopAllWorkers");
+              await page.evaluate(replaceDatabases, { databases, versionChanges: true });
+            }
+          }
+          await page.evaluate((items) => {
+            localStorage.clear();
+            for (const item of items) localStorage.setItem(item.name, item.value);
+          }, stored.localStorage);
+          return "written";
+        }).pipe(Effect.map((outcome) => (outcome === "waiting" ? [stored.origin] : []))),
+      ).pipe(
+        Effect.map((outcomes): BrowserStorageWritten => {
+          const waiting = outcomes.flat();
+          return waiting.length === 0 ? {} : { waiting };
+        }),
+      );
+
+    /**
+     * Deletes the site data of `clear`'s origins, or of every origin a tab
+     * showed, besides cookies, from a page of the context: CDP's `Storage`
+     * clears the storage of the target's own browser context, as
+     * `ServerHost.test.ts` checks. Then each open tab of those origins loses
+     * its `sessionStorage`, which
+     * CDP does not clear, in every frame of them, and a tab whose page is of
+     * one loads again, so no page keeps a sign-in in its memory either.
+     */
+    const clearStorage = (clear: PageHostPayload<"storage.clear">["clear"]) => {
+      const origins = "all" in clear ? [...shownOrigins] : clear.origins;
+      const ofThem = (url: string) => {
+        const origin = webOriginOf(url);
+        return origin !== undefined && ("all" in clear || clear.origins.includes(origin));
+      };
+      const cleared =
+        origins.length === 0
+          ? Effect.void
+          : send(async () => {
+              const page = await context.newPage();
+              try {
+                const cdp = await context.newCDPSession(page);
+                for (const origin of origins)
+                  await cdp.send("Storage.clearDataForOrigin", {
+                    origin,
+                    storageTypes: CLEARED_STORAGE,
+                  });
+              } finally {
+                await page.close();
+              }
+            });
+      const signedOutTabs = Effect.forEach(
+        [...tabs.values()],
+        ({ driver }) =>
+          send(async () => {
+            const { page } = driver;
+            for (const frame of page.frames())
+              if (ofThem(frame.url()))
+                await frame.evaluate(() => sessionStorage.clear()).catch(() => undefined);
+            if (ofThem(page.url())) await page.reload({ waitUntil: "commit" });
+          }),
         { discard: true },
       );
+      return Effect.andThen(cleared, signedOutTabs);
+    };
 
     /**
      * The tab's page: the one open, the one opening, or a new one, so a ref
@@ -513,7 +678,14 @@ export const launchServerHost = (input: {
           arch: platform === "linux-arm64" || platform === "mac-arm64" ? "arm64" : "x64",
         },
         browser: { version: CHROME_VERSION, userAgent: userAgentOf(platform) },
-        capabilities: { screencast: true, input: true, cookies: true, storage: true, files: true },
+        capabilities: {
+          screencast: true,
+          input: true,
+          cookies: true,
+          storage: true,
+          indexedDb: true,
+          files: true,
+        },
         tabs: states,
       };
     });
@@ -528,6 +700,7 @@ export const launchServerHost = (input: {
       writeCookies,
       readStorage,
       writeStorage,
+      clearStorage,
       putFile,
       takeDownload,
       tabCount: Effect.sync(() => tabs.size),

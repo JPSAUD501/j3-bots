@@ -8,6 +8,7 @@ export {
 export { addressOf } from "./driver/address.ts";
 export { type DriverPage, makeDriverPage, type PointerReporter } from "./driver/DriverPage.ts";
 export { hostErrorOf } from "./driver/errors.ts";
+export { type DatabaseDump, readDatabases, replaceDatabases } from "./indexedDb.ts";
 export {
   type BrowserHostRpc,
   driverTabCalls,
@@ -18,6 +19,8 @@ export {
   pageHostHandlers,
   remotePageHost,
 } from "./PageHost.ts";
+export { type CdpCookieParam, cdpParamOf, cdpRemovalOf, cookieOfCdp } from "./cookies.ts";
+export { type ProfileSignIns, ProfileUnreadable, readProfileSignIns } from "./profile.ts";
 export {
   HOST_SOCKET_PING,
   HOST_SOCKET_SILENCE,

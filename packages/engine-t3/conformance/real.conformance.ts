@@ -353,7 +353,7 @@ describe("Engine conformance, real engine only", () => {
         const first = yield* j3Sessions(executable, home);
         assert.strictEqual(first.length, 1);
 
-        // Recorded as minted before the adapter asked for `preview:operate`.
+        // Recorded as minted before the adapter asked for `settings:write`.
         const stored = path.join(engineFolders(path, home).j3, "credential.json");
         const Recorded = Schema.fromJsonString(
           Schema.Struct({
