@@ -393,7 +393,7 @@ export function PageView({
           onIt={onIt}
           drawn={drawn}
           page={page}
-          faded={holding}
+          held={holding}
         />
       )}
       {mark !== null && (
