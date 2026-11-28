@@ -128,7 +128,10 @@ export interface FakePageHost extends PageHost {
     name: string,
     bytes: Uint8Array,
   ) => Effect.Effect<BrowserDownloadId>;
-  /** A download that starts on the tab now, and finishes, kept, once `finish` runs. */
+  /**
+   * A download that starts on the tab now, and finishes, kept, once
+   * `finish` runs; or ends without a file once `end` runs.
+   */
   readonly startDownload: (
     tab: BrowserTabRef,
     name: string,
@@ -136,6 +139,7 @@ export interface FakePageHost extends PageHost {
   ) => Effect.Effect<{
     readonly download: BrowserDownloadId;
     readonly finish: Effect.Effect<void>;
+    readonly end: (outcome: "cancelled" | "failed") => Effect.Effect<void>;
   }>;
   /** The files given for uploads, by the path the host answered. */
   readonly files: Effect.Effect<ReadonlyMap<string, Uint8Array>>;
@@ -315,7 +319,16 @@ export const makeFakePageHost = (
             size: bytes.length,
           });
         }).pipe(Effect.asVoid);
-        return { download: id, finish };
+        const end = (outcome: "cancelled" | "failed") =>
+          PubSub.publish(events, {
+            type: "download.finished",
+            tab,
+            download: id,
+            name,
+            size: 0,
+            outcome,
+          }).pipe(Effect.asVoid);
+        return { download: id, finish, end };
       });
     const host: FakePageHost = {
       // Built at each call: the tabs and the store are the host's as they are now.

@@ -30,6 +30,8 @@ import * as Schema from "effect/Schema";
 
 export { BRIDGE_KEY, type DesktopBridge, IPC_CHANNELS } from "./channels.ts";
 export { AppLink, AppLinkUrl } from "./link.ts";
+export * from "./browser.ts";
+export * from "./presence.ts";
 export * from "./recording.ts";
 // The server, as the desktop app keeps it: the origin the contract defines.
 export { ServerOrigin } from "@j3-bots/contracts";
@@ -1046,5 +1048,15 @@ export const HostedBridge = Schema.Struct({
   recorderControl: Callable,
   recorderFailed: Callable,
   onRecorderCue: Callable,
+  linkBrowser: Callable,
+  browserState: Callable,
+  onBrowser: Callable,
+  browserCommand: Callable,
+  placeBrowser: Callable,
+  onBrowserStill: Callable,
+  onBrowserFound: Callable,
+  onBrowserShortcut: Callable,
+  browserSuggest: Callable,
+  browserPresence: Callable,
 });
 export type HostedBridge = typeof HostedBridge.Type;

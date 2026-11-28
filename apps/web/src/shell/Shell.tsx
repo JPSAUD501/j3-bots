@@ -33,6 +33,11 @@ import {
 } from "@j3-bots/client-runtime/presentation";
 import { RosterProvider, useI18n } from "../app/context";
 import { BrowserIndicator } from "../browser/BrowserIndicator";
+import { BrowserToggle } from "../browser/desktop/BrowserToggle";
+import type { BrowserPlace } from "@j3-bots/desktop-bridge";
+import { PagePresence } from "../browser/desktop/presence/onTabs";
+import { useDesktopBrowserHere } from "../browser/desktop/state";
+import { desktop } from "../live/desktop";
 import { BrowserPanel } from "../browser/BrowserPanel";
 import type { BrowserViewerHandle } from "../browser/BrowserViewer";
 import { BrowserProvider } from "../browser/context";
@@ -74,7 +79,7 @@ import { tintOf } from "../lib/botTint";
 import { onboarding } from "../onboarding/deferred";
 import type { ShellData, ShellIntents } from "./data";
 import { cn } from "../lib/cn";
-import { preloadWhenIdle } from "../lib/deferred";
+import { deferred, preloadWhenIdle } from "../lib/deferred";
 import { isCovered, useCovered } from "../lib/covered";
 import { botModelName } from "@j3-bots/client-runtime/wording";
 import { useConversationView } from "./conversationView";
@@ -82,6 +87,11 @@ import { useShellLayout } from "./layout";
 import { onShellAction, type ShellAction } from "./commands";
 import { rosterIntents } from "./rosterIntents";
 import { isEditable, shellShortcuts } from "./shortcuts";
+
+/** The desktop app's own browser beside the conversation: only the desktop app loads it, and only once opened. */
+const DesktopBrowserPanel = deferred(() =>
+  import("../browser/desktop/DesktopBrowserPanel").then((panel) => panel.DesktopBrowserPanel),
+).Component;
 
 // Not part of the app's first load: the first run. The details and the
 // browser beside a conversation are: the shell moves focus into them, and hands
@@ -168,7 +178,10 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
   const [routinesFor, setRoutinesFor] = useState<BotId | null>(null);
   if (openingFirstBot && item !== null) setOpeningFirstBot(false);
   // Beside the conversation, or over it: a bot's browser, or else the details.
-  const browserTarget = item?._tag === "bot" ? navigation.browser : null;
+  // A bot's browser beside its conversation; on the desktop, the app's own browser, which is
+  // the person's, beside any conversation, a room's included.
+  const browserTarget =
+    item?._tag === "bot" || (item !== null && desktop !== null) ? navigation.browser : null;
   const detailsOpen = navigation.detailsOpen && browserTarget === null;
   const aside = browserTarget !== null ? "browser" : detailsOpen ? "details" : null;
   // On a phone the details take the screen; the browser rises over the conversation as a sheet.
@@ -190,6 +203,32 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
     if (viewerRef.current === null) next();
     else viewerRef.current.requestClose(next);
   };
+  // In the desktop app, its own browser: a tab on this computer opens there, beside the conversation.
+  const desktopBrowser = useDesktopBrowserHere(desktop?.browser ?? null);
+  const [resizingBrowser, setResizingBrowser] = useState(false);
+  const inDesktopBrowser =
+    desktop !== null &&
+    browserTarget !== null &&
+    (browserTarget === "front" ||
+      desktopBrowser?.tabs.some((tab) => tab.ref === browserTarget) === true);
+  // A tab the person sends here from the browser's window shows beside the open
+  // conversation, in place of what that side showed. With none open it waits in the
+  // panel, which any conversation opens.
+  const sentBeside = useEffectEvent((tab: BrowserTabRef) => {
+    if (item !== null && !inDesktopBrowser) navigation.setBrowser(tab);
+  });
+  useEffect(() => {
+    const bridge = desktop?.browser;
+    if (bridge === undefined) return;
+    let places = new Map<BrowserTabRef, BrowserPlace>();
+    return bridge.onChange((state) => {
+      const was = places;
+      places = new Map(state.tabs.map((tab) => [tab.ref, tab.place]));
+      // Closing the window brings every tab back too; only a tab sent while it stays open is shown.
+      const sent = state.tabs.find((tab) => tab.place === "panel" && was.get(tab.ref) === "window");
+      if (state.windowOpen && sent !== undefined) sentBeside(sent.ref);
+    });
+  }, []);
   const closeAside = () => {
     if (aside === "browser") closeBrowser();
     else navigation.setDetailsOpen(false);
@@ -539,19 +578,30 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
               text,
             }))
           }
-          {...(browserBot === null
-            ? {}
-            : {
+          {...(desktop !== null
+            ? {
                 actions: (
-                  <BrowserIndicator
-                    bot={browserBot}
+                  <BrowserToggle
                     open={browserTarget !== null}
-                    onOpen={() =>
+                    onToggle={() =>
                       browserTarget === null ? navigation.setBrowser("front") : closeAside()
                     }
                   />
                 ),
-              })}
+              }
+            : browserBot === null
+              ? {}
+              : {
+                  actions: (
+                    <BrowserIndicator
+                      bot={browserBot}
+                      open={browserTarget !== null}
+                      onOpen={() =>
+                        browserTarget === null ? navigation.setBrowser("front") : closeAside()
+                      }
+                    />
+                  ),
+                })}
         />
         {view.phase === "not-found" ? (
           <ConversationGone onBack={() => navigation.select(null)} />
@@ -720,7 +770,22 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
         </div>
       </>
     );
-    if (browserBot !== null && browserTarget !== null) {
+    // Beside a room, only the app's own browser: a bot's server tab has no place there.
+    if (desktop !== null && browserTarget !== null && (inDesktopBrowser || browserBot === null)) {
+      details = (
+        <DesktopBrowserPanel
+          bridge={desktop.browser}
+          target={browserTarget}
+          over={detailsModal}
+          onClose={() => navigation.setBrowser(null)}
+          onSignIns={() => openSettings(intents)}
+          headingRef={detailsHeadingRef}
+          headingId={detailsHeadingId}
+          held={resizingBrowser}
+          ref={viewerRef}
+        />
+      );
+    } else if (browserBot !== null && browserTarget !== null) {
       // Below the wide layout, the browser is the phone's live view; beside the conversation, the viewer.
       details =
         layout === "wide" ? (
@@ -838,6 +903,7 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
       <NeedsYouTitle />
       <BotCardProvider intents={cardIntents}>
         <BrowserProvider source={browser}>
+          {desktop !== null && <PagePresence bridge={desktop.browser} />}
           <AvatarConnection connected={data.connected}>
             <AppShell
               roster={roster}
@@ -852,6 +918,7 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
               containerRef={containerRef}
               conversationRef={setConversationRegion}
               onCloseDetails={closeAside}
+              onBrowserResizing={setResizingBrowser}
             />
           </AvatarConnection>
         </BrowserProvider>

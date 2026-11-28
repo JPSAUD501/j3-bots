@@ -1,11 +1,25 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { Dialog } from "@base-ui/react/dialog";
-import { useState, type ReactNode, type Ref, type RefObject } from "react";
+import {
+  type CSSProperties,
+  type ReactNode,
+  type Ref,
+  type RefObject,
+  useRef,
+  useState,
+} from "react";
 import { cn } from "../lib/cn";
+import { deferred } from "../lib/deferred";
+import { BROWSER_MIN, CONVERSATION_MIN, storedBrowserWidth } from "../shell/browserWidth";
 import { useKeptWhileLeaving } from "../lib/useKeptWhileLeaving";
 import type { ShellLayout } from "../shell/layout";
 
 export type Region = "roster" | "conversation" | "details";
+
+/** Only once a browser is open beside the conversation: not part of the app's first load. */
+const Divider = deferred(() =>
+  import("./PaneDivider").then((divider) => divider.PaneDivider),
+).Component;
 
 interface AppShellProps {
   readonly roster: ReactNode;
@@ -28,6 +42,8 @@ interface AppShellProps {
   /** The conversation's region, for what lies over it. */
   readonly conversationRef: Ref<HTMLElement>;
   readonly onCloseDetails: () => void;
+  /** The browser beside the conversation is being resized, and so moves under the pointer. */
+  readonly onBrowserResizing?: ((resizing: boolean) => void) | undefined;
 }
 
 /**
@@ -53,6 +69,7 @@ export function AppShell({
   containerRef,
   conversationRef,
   onCloseDetails,
+  onBrowserResizing,
 }: AppShellProps) {
   // The dialog is drawn inside the shell, so it lies over the shell and not over the page around it.
   const [frame, setFrame] = useState<HTMLDivElement | null>(null);
@@ -63,14 +80,23 @@ export function AppShell({
   const [keptKind, setKeptKind] = useState(asideKind);
   if (details !== null && keptKind !== asideKind) setKeptKind(asideKind);
   const browser = (details === null ? keptKind : asideKind) === "browser";
-  // Beside the conversation the browser takes what room the conversation can spare.
-  const paneWidth = browser
-    ? "w-[clamp(25rem,calc(100cqw_-_var(--layout-roster-width)_-_28rem),60rem)]"
-    : "w-(--layout-details-width)";
+  const rosterRef = useRef<HTMLElement>(null);
+  // Beside the conversation the browser takes what room the conversation can spare, or as wide
+  // as the person left it.
+  const [wanted, setWanted] = useState(storedBrowserWidth);
+  const paneWidth = browser ? "w-(--browser-width)" : "w-(--layout-details-width)";
+  const browserWidth =
+    wanted === null
+      ? "clamp(25rem, calc(100cqw - var(--layout-roster-width) - 28rem), 60rem)"
+      : `clamp(${BROWSER_MIN}px, ${wanted}px, calc(100cqw - var(--layout-roster-width) - ${CONVERSATION_MIN}px))`;
+  const browserStyle: CSSProperties & Record<"--browser-width", string> = {
+    "--browser-width": browserWidth,
+  };
   return (
     <div ref={containerRef} className="@container h-full w-full">
       <div ref={setFrame} className="relative flex h-full w-full overflow-hidden bg-background">
         <aside
+          ref={rosterRef}
           data-active={active === "roster" ? "" : undefined}
           inert={covered}
           className="hidden w-full shrink-0 flex-col border-border bg-sidebar pt-(--inset-top) pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] data-active:flex @max-tablet:pr-[env(safe-area-inset-right)] @tablet:flex @tablet:w-(--layout-roster-width) @tablet:border-e"
@@ -86,10 +112,21 @@ export function AppShell({
         >
           {conversation}
         </main>
+        {pane.shown !== null && layout === "wide" && browser && frame !== null && (
+          <Divider
+            frame={frame}
+            roster={rosterRef}
+            wanted={wanted}
+            onWanted={setWanted}
+            onResizing={onBrowserResizing}
+            onClose={onCloseDetails}
+          />
+        )}
         {pane.shown !== null && layout === "wide" && (
           <aside
             aria-labelledby={detailsHeadingId}
             inert={pane.leaving}
+            style={browser ? browserStyle : undefined}
             className={cn("flex shrink-0 overflow-hidden", paneWidth)}
           >
             {/*

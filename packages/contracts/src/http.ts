@@ -121,7 +121,8 @@ export const HTTP_PATHS = {
    * device token as a bearer; one without a valid token is answered 401 and
    * never becomes a socket. The server pings every 15 s, and a host that
    * hears nothing for 45 s dials again. A server without J3 Bots' own
-   * browser answers 404, and the desktop tries again at its next connect.
+   * browser answers 404, and the desktop dials again later, waiting twice
+   * as long each time, up to 30 s.
    */
   browserHost: "/api/browser/host",
   /**

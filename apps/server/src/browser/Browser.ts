@@ -619,6 +619,18 @@ export const layer = Layer.effect(
     ) {
       const botId = host.downloads.get(event.download) ?? null;
       host.downloads.delete(event.download);
+      // One that did not finish left the host no file to take.
+      if (event.outcome === "cancelled" || event.outcome === "failed") {
+        if (botId !== null)
+          tell(
+            botId,
+            event.tab,
+            event.outcome === "cancelled"
+              ? BROWSER_NOTES.downloadCancelled(event.name)
+              : BROWSER_NOTES.downloadFailed(event.name),
+          );
+        return;
+      }
       const letGo = host.host.takeDownload({ download: event.download }).pipe(Effect.ignore);
       if (botId === null) return yield* letGo;
       if (event.size > MAX_ATTACHMENT_SIZE) {

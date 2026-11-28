@@ -12,6 +12,10 @@
     "./channels": {
       "types": "./src/channels.ts",
       "import": "./src/channels.ts"
+    },
+    "./presence": {
+      "types": "./src/presence.ts",
+      "import": "./src/presence.ts"
     }
   },
   "scripts": {

@@ -14,7 +14,7 @@ describe("the environment the server runs with", () => {
     webClient: "/opt/J3 Bots/resources/web/dist",
   };
 
-  it("keeps the operator's own variables, trusted certificates and say on usage data, and sets its PATH, home, address and web client", () => {
+  it("keeps the operator's own variables, trusted certificates and say on usage data, and sets its PATH, home, address and web client, with no browser of its own", () => {
     const env = serverEnvironment(
       {
         HOME: "/home/ana",
@@ -35,6 +35,7 @@ describe("the environment the server runs with", () => {
       J3_HOME: "/data/server/home",
       J3_HOST: "127.0.0.1",
       J3_WEB_CLIENT: "/opt/J3 Bots/resources/web/dist",
+      J3_BROWSER_SERVER_HOST: "off",
     });
   });
 
@@ -56,6 +57,7 @@ describe("the environment the server runs with", () => {
     );
     assert.deepStrictEqual(Object.keys(env).sort(), [
       "HOME",
+      "J3_BROWSER_SERVER_HOST",
       "J3_HOME",
       "J3_HOST",
       "J3_WEB_CLIENT",

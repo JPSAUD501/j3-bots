@@ -1,5 +1,7 @@
 @import "tailwindcss";
 @import "@j3-bots/design-tokens/web.css";
+@import "./components/avatar/avatar.css";
+@import "./fadeIn.css";
 
 /* Either theme class can be set on any element; the nearest one wins. */
 @custom-variant dark (&:where(.dark, .dark *));
@@ -60,32 +62,6 @@
   button:not(:disabled),
   [role="button"]:not(:disabled) {
     cursor: pointer;
-  }
-}
-
-/*
- * Avatars. Their motion runs on the shared frame loop (components/avatar/ticker.ts);
- * the stylesheet only fades a state's signal in and out, and puts an offline bot to sleep.
- */
-@layer components {
-  .avatar .avatar-signal {
-    opacity: 0;
-    transition: opacity var(--duration-state) var(--ease-out);
-  }
-
-  .avatar[data-signal="ring"] [data-signal-of="ring"],
-  .avatar[data-signal="ping"] [data-signal-of="ping"],
-  .avatar[data-signal="arcs"] [data-signal-of="arcs"],
-  .avatar[data-signal="dots"] [data-signal-of="dots"] {
-    opacity: 1;
-  }
-
-  .avatar {
-    transition: filter var(--duration-slow) var(--ease-out);
-  }
-
-  .avatar[data-asleep="true"] {
-    filter: saturate(0.12) opacity(0.5);
   }
 }
 
@@ -409,10 +385,6 @@
 
   .pop-in {
     animation: pop-in var(--duration-pop) var(--ease-pop) backwards;
-  }
-
-  .fade-in {
-    animation: fade-in var(--duration-state) var(--ease-out) backwards;
   }
 
   /* A line of status giving way to the next: the old leaves upward, the new rises in. */
@@ -1604,12 +1576,6 @@
   }
 }
 
-@keyframes fade-in {
-  from {
-    opacity: 0;
-  }
-}
-
 @keyframes onboarding-fade-out {
   to {
     opacity: 0;
@@ -1703,6 +1669,13 @@
  * (`--pane-from`, set per direction), by a transform, so nothing is laid out
  * again while they move.
  */
+/* The address bar while a page loads: it fills slowly, and never quite to the end. */
+@keyframes address-fill {
+  to {
+    width: 85%;
+  }
+}
+
 @keyframes pane-in {
   from {
     translate: var(--pane-from) 0;

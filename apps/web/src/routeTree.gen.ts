@@ -14,6 +14,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as RecordRouteImport } from './routes/record'
 import { Route as QuickRouteImport } from './routes/quick'
 import { Route as GalleryRouteImport } from './routes/gallery'
+import { Route as BrowserRouteImport } from './routes/browser'
 import { Route as AppRouteImport } from './routes/_app'
 import { Route as AppIndexRouteImport } from './routes/_app/index'
 import { Route as AppRoomsRoomIdRouteImport } from './routes/_app/rooms.$roomId'
@@ -33,6 +34,11 @@ const QuickRoute = QuickRouteImport.update({
 const GalleryRoute = GalleryRouteImport.update({
   id: '/gallery',
   path: '/gallery',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const BrowserRoute = BrowserRouteImport.update({
+  id: '/browser',
+  path: '/browser',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AppRoute = AppRouteImport.update({
@@ -62,6 +68,7 @@ const AppPairsABRoute = AppPairsABRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof AppIndexRoute
+  '/browser': typeof BrowserRoute
   '/gallery': typeof GalleryRoute
   '/quick': typeof QuickRoute
   '/record': typeof RecordRoute
@@ -70,6 +77,7 @@ export interface FileRoutesByFullPath {
   '/pairs/$a/$b': typeof AppPairsABRoute
 }
 export interface FileRoutesByTo {
+  '/browser': typeof BrowserRoute
   '/gallery': typeof GalleryRoute
   '/quick': typeof QuickRoute
   '/record': typeof RecordRoute
@@ -81,6 +89,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_app': typeof AppRouteWithChildren
+  '/browser': typeof BrowserRoute
   '/gallery': typeof GalleryRoute
   '/quick': typeof QuickRoute
   '/record': typeof RecordRoute
@@ -93,6 +102,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/browser'
     | '/gallery'
     | '/quick'
     | '/record'
@@ -101,6 +111,7 @@ export interface FileRouteTypes {
     | '/pairs/$a/$b'
   fileRoutesByTo: FileRoutesByTo
   to:
+    | '/browser'
     | '/gallery'
     | '/quick'
     | '/record'
@@ -111,6 +122,7 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/_app'
+    | '/browser'
     | '/gallery'
     | '/quick'
     | '/record'
@@ -122,6 +134,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   AppRoute: typeof AppRouteWithChildren
+  BrowserRoute: typeof BrowserRoute
   GalleryRoute: typeof GalleryRoute
   QuickRoute: typeof QuickRoute
   RecordRoute: typeof RecordRoute
@@ -148,6 +161,13 @@ declare module '@tanstack/react-router' {
       path: '/gallery'
       fullPath: '/gallery'
       preLoaderRoute: typeof GalleryRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/browser': {
+      id: '/browser'
+      path: '/browser'
+      fullPath: '/browser'
+      preLoaderRoute: typeof BrowserRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_app': {
@@ -206,6 +226,7 @@ const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
 
 const rootRouteChildren: RootRouteChildren = {
   AppRoute: AppRouteWithChildren,
+  BrowserRoute: BrowserRoute,
   GalleryRoute: GalleryRoute,
   QuickRoute: QuickRoute,
   RecordRoute: RecordRoute,

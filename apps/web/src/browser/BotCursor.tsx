@@ -11,6 +11,11 @@ import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "re
 import { type AvatarHandle, BotAvatar } from "../components/avatar/BotAvatar";
 import { useReducedMotion } from "../onboarding/motion";
 
+/** What a pointer shows of its bot: its face and name. */
+export type PointerBot = Pick<Bot, "id"> & {
+  readonly profile: Pick<Bot["profile"], "name" | "avatar">;
+};
+
 /** How many points a glide's curve is drawn through. */
 const GLIDE_STEPS = 16;
 
@@ -39,7 +44,7 @@ export function BotCursor({
   held = false,
   thinking = false,
 }: {
-  readonly bot: Bot;
+  readonly bot: PointerBot;
   readonly at: { readonly x: number; readonly y: number };
   readonly glide?: number;
   readonly clicked: number | null;

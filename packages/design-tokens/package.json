@@ -21,6 +21,7 @@
       "import": "./src/raster/index.ts"
     },
     "./web.css": "./generated/web.css",
+    "./shadow.css": "./generated/shadow.css",
     "./uniwind.css": "./generated/uniwind.css",
     "./fonts.json": "./generated/fonts.json",
     "./icons/*": "./generated/icons/*",

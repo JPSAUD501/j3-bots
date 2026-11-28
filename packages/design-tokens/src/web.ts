@@ -71,8 +71,13 @@ const springEntries = (): ReadonlyArray<Entry> =>
  * pointer is coarse, so the web on a phone reads as the Android app does.
  * Tailwind's text utilities read the sizes through these variables, so the
  * one class takes either set.
+ *
+ * `shadow` is the same sheet for a shadow root, as a bot's pointer drawn in a
+ * web page has (`shadow.css`): its root is `:host`, and it declares no faces,
+ * which a shadow root's sheet cannot.
  */
-export function renderWebCss(): string {
+export function renderWebCss(scope: "document" | "shadow" = "document"): string {
+  const root = scope === "document" ? ":root" : ":host";
   const colorUtilities = colorEntries(stockPalette("light"), "light", "").map(([name]): Entry => [
     `color-${name}`,
     `var(--${name})`,
@@ -80,9 +85,7 @@ export function renderWebCss(): string {
 
   return `/* Generated from packages/design-tokens/src by \`pnpm --filter @j3-bots/design-tokens generate\`. Do not edit. */
 
-${fontFaceRules()}
-
-:root,
+${scope === "document" ? `${fontFaceRules()}\n\n` : ""}${root},
 .light {
   color-scheme: light;
 ${lines([...colorEntries(stockPalette("light"), "light", ""), ...shadowEntries("light")])}
@@ -93,7 +96,7 @@ ${lines([...colorEntries(stockPalette("light"), "light", ""), ...shadowEntries("
 ${lines([...colorEntries(stockPalette("dark"), "dark", ""), ...shadowEntries("dark")])}
 }
 
-:root {
+${root} {
 ${lines([
   ["duration-fast", `${motion.fast}ms`],
   ["duration-state", `${motion.state}ms`],
@@ -148,7 +151,7 @@ ${lines([
 }
 
 @media (pointer: coarse) {
-  :root {
+  ${root} {
 ${declarations(touchTypeEntries(), "    ")}
   }
 }

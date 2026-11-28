@@ -345,7 +345,17 @@ export const launchServerHost = (input: {
             const id = BrowserDownloadId.make(`dl_${yield* randomHex}`);
             yield* publish({ type: "download.started", tab: ref, download: id });
             const failure = yield* Effect.promise(() => download.failure());
-            if (failure !== null) return;
+            if (failure !== null) {
+              return yield* publish({
+                type: "download.finished",
+                tab: ref,
+                download: id,
+                name: fileNameOf(download.suggestedFilename()),
+                size: 0,
+                // Playwright names a download stopped before its end `canceled`.
+                outcome: failure === "canceled" ? "cancelled" : "failed",
+              });
+            }
             const file = yield* Effect.promise(() => download.path());
             const info = yield* fs.stat(file);
             downloads.set(id, download);

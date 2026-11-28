@@ -1,0 +1,14 @@
+/*
+ * The bots' pointers drawn in a page of the desktop's browser (overlay.tsx):
+ * only what the pointer and the face use, on the tokens' sheet for a shadow root,
+ * so nothing reaches the page and nothing of it is left out.
+ */
+@import "tailwindcss" source(none);
+@import "@j3-bots/design-tokens/shadow.css";
+@import "../../../components/avatar/avatar.css";
+@import "../../../fadeIn.css";
+
+@source "../../TabPointers.tsx";
+@source "../../BotCursor.tsx";
+@source "../../../components/avatar/BotAvatar.tsx";
+@source "./overlay.tsx";

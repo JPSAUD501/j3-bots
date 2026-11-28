@@ -6,6 +6,15 @@ import { contextBridge, ipcRenderer } from "electron";
 // are: the main process decodes what the page asks, and the page decodes what
 // comes back (`HostedBridge`). It runs sandboxed, with no Node.js.
 
+/** Calls `listener` with each message on `channel`; answers a function that stops it. */
+const listen = (channel: string, listener: (value: unknown) => void) => {
+  const forward = (_event: unknown, value: unknown) => listener(value);
+  ipcRenderer.on(channel, forward);
+  return () => {
+    ipcRenderer.removeListener(channel, forward);
+  };
+};
+
 const bridge: DesktopBridge = {
   // Read once, before any script of the page runs, so the page knows its server as it starts.
   state: ipcRenderer.sendSync(IPC_CHANNELS.state),
@@ -152,6 +161,16 @@ const bridge: DesktopBridge = {
       ipcRenderer.removeListener(IPC_CHANNELS.recorderCue, forward);
     };
   },
+  linkBrowser: (link) => ipcRenderer.send(IPC_CHANNELS.browserLink, link),
+  browserState: () => ipcRenderer.invoke(IPC_CHANNELS.browserState),
+  onBrowser: (listener) => listen(IPC_CHANNELS.browserChanged, listener),
+  browserCommand: (command) => ipcRenderer.send(IPC_CHANNELS.browserCommand, command),
+  placeBrowser: (placement) => ipcRenderer.send(IPC_CHANNELS.browserPlace, placement),
+  onBrowserStill: (listener) => listen(IPC_CHANNELS.browserStill, listener),
+  onBrowserFound: (listener) => listen(IPC_CHANNELS.browserFound, listener),
+  onBrowserShortcut: (listener) => listen(IPC_CHANNELS.browserShortcut, listener),
+  browserSuggest: (request) => ipcRenderer.invoke(IPC_CHANNELS.browserSuggest, request),
+  browserPresence: (presence) => ipcRenderer.send(IPC_CHANNELS.browserPresence, presence),
 };
 
 contextBridge.exposeInMainWorld(BRIDGE_KEY, bridge);
