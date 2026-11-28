@@ -49,4 +49,6 @@ J3 Bots is free software under the [GNU Affero General Public License, version 3
 
 T3 Code is MIT licensed and is not affiliated with this project.
 
+A bot's pointer moves on the method of [cursor-motion](https://github.com/xnmeet/cursor-motion) by xnmeet, itself a port of [open-codex-computer-use](https://github.com/iFurySt/open-codex-computer-use) by iFurySt, both MIT licensed, written anew with J3 Bots' own weights and springs ([decision 0111](docs/decisions/0111-the-bots-pointer-moves-on-a-model-taken-from-cursor-motion.md)). Neither project is affiliated with this one.
+
 The connector gallery's search uses data from the [official MCP Registry](https://registry.modelcontextprotocol.io), which its terms dedicate to the public domain (CC0). J3 Bots is not affiliated with the registry or with the services it lists, whose names are their owners' trademarks.

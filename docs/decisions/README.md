@@ -105,5 +105,6 @@ A record exists for a decision that would be expensive to reverse. Each one stat
 | [0108](0108-the-operator-sets-up-each-ai-account-and-picks-a-bots-model-as-in-t3-code.md) | The operator sets up each AI account, and picks a bot's model as in T3 Code | Accepted |
 | [0109](0109-a-new-bot-can-browse-the-web-and-the-operator-turns-it-off.md) | A new bot can browse the web, and the operator turns it off | Accepted; its browser is J3 Bots' own from [0110](0110-j3-bots-runs-its-own-browsers-and-the-engines-is-off.md) |
 | [0110](0110-j3-bots-runs-its-own-browsers-and-the-engines-is-off.md) | J3 Bots runs its own browsers, and the engine's is off | Accepted for 0.16 |
+| [0111](0111-the-bots-pointer-moves-on-a-model-taken-from-cursor-motion.md) | The bot's pointer moves on a model taken from cursor-motion | Accepted for 0.17 |
 
 When a decision is replaced, its record is rewritten to say what now holds and why the earlier choice was dropped.

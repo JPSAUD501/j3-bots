@@ -168,7 +168,7 @@ export {
   drawnRect,
   fitted,
   followedView,
-  glidedBetween,
+  movedBetween,
   keptInSight,
   keptInView,
   MAX_ZOOM,
@@ -178,7 +178,7 @@ export {
   restingZoom,
   seenPart,
   type Size,
-  viewGlideFor,
+  viewResponseFor,
   type Zoom,
   zoomedAbout,
   zoomOn,
@@ -198,14 +198,28 @@ export {
   touchStarted,
 } from "./pageTouch.ts";
 export { claimsSwipe, swipeDirection } from "./sideSwipe.ts";
+export { pointerAside, pointerThinks, tagCloseAfter } from "./botPointer.ts";
 export {
-  alongGlide,
-  glideBend,
-  type GlideSide,
-  pointerAside,
-  pointerThinks,
-  tagOpenFor,
-} from "./botPointer.ts";
+  arrivingAt,
+  leanFor,
+  moveResponse,
+  type OtherTag,
+  pathAt,
+  pointerBounds,
+  type PointerBounds,
+  type PointerMotion,
+  pointerPath,
+  type PointerPath,
+  type PointerStep,
+  type PointerStepOptions,
+  progressAt,
+  restingAt,
+  startMove,
+  stepPointer,
+  tagOffset,
+  type TagSide,
+  tagSide,
+} from "./pointerMotion.ts";
 export { type OwnAppClient, ownAppClient, type OwnAppSetup, ownAppSetup } from "./connectorAsk.ts";
 export {
   applyConnectorChange,

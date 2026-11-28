@@ -22,7 +22,7 @@ import {
 } from "./botPalette.ts";
 import { renderFontManifest } from "./fontManifest.ts";
 import { botColors } from "./names.ts";
-import { colors, type ColorRole, glideFor, motion, typeScale, type TypeInput } from "./tokens.ts";
+import { colors, type ColorRole, typeScale, type TypeInput } from "./tokens.ts";
 import { renderUniwindCss } from "./uniwind.ts";
 import { renderWebCss } from "./web.ts";
 
@@ -303,20 +303,5 @@ describe("the type scale on touch", () => {
     for (const step of Object.values(typeScale)) {
       expect(step.touch.size).toBeGreaterThanOrEqual(step.pointer.size);
     }
-  });
-});
-
-describe("a bot's pointer glide", () => {
-  it("takes the shortest glide for no move and the whole one across half the page or more", () => {
-    expect(glideFor(0)).toBe(motion.glideShortest);
-    expect(glideFor(0.5)).toBe(motion.glide);
-    expect(glideFor(1)).toBe(motion.glide);
-  });
-
-  it("takes longer the longer the move", () => {
-    const shares = [0.01, 0.05, 0.1, 0.2, 0.35, 0.5];
-    const glides = shares.map(glideFor);
-    expect(glides).toEqual([...glides].sort((a, b) => a - b));
-    expect(new Set(glides).size).toBe(glides.length);
   });
 });

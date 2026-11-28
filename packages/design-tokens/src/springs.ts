@@ -158,15 +158,10 @@ export const springs = {
 /** The `out` ease's control points, for a platform that takes them as numbers, as Reanimated's `Easing.bezier` does. */
 export const easeOutCurve = [0.2, 0.8, 0.2, 1] as const;
 
-/** The `glide` ease's control points, for Reanimated's `Easing.bezier`. */
-export const glideCurve = [0.22, 0.8, 0.3, 1] as const;
-
 /** Eases for what a spring does not suit: fades, and moves with no end to overshoot. */
 export const eases = {
   /** Fast out, long settle. */
   out: `cubic-bezier(${easeOutCurve.join(", ")})`,
-  /** A bot's pointer gliding over the page: away at once, settling softly where it lands. */
-  glide: `cubic-bezier(${glideCurve.join(", ")})`,
 } as const;
 
 /** Press feedback: what a pressed control scales to, and how fast it goes down. It comes back on `pop`. */

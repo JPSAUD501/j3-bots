@@ -16,13 +16,19 @@ import { fakeSite, launch, linkTo, mainWindow, pairFromLink, STEP } from "./elec
 // A desktop tab the people watched, and stopped watching while the host's
 // newest picture waited for a socket that never drew it, still sends its
 // pictures to the next one to watch; and a watched page that does not
-// change sends none, with the bot's pointer drawn in it. Needs the web
-// client built and a display (`xvfb-run`), as the smoke does. No real site
-// is touched.
+// change sends none, with the bot's pointer drawn in it: once it rests from
+// a click, from a far click that leant its arrow on the way, and from a
+// think while the bot still thinks. Needs the web client built and a
+// display (`xvfb-run`), as the smoke does. No real site is touched.
 
-/** A page that changes every tenth of a second at `?tick`, and never otherwise. */
+/**
+ * A page that changes every tenth of a second at `?tick`, and never otherwise.
+ * `#far` is across the page from `#press`, square to the arrow's axis, the way
+ * a move leans it most.
+ */
 const PAGE = `<!doctype html><html><head><title>Fake Errand</title></head>
 <body style="background:#f4a261"><h1>Fake Errand</h1><p id="tick"></p><button id="press">Press</button>
+<button id="far" style="position:fixed;top:24px;right:24px">Far</button>
 <script>
   if (location.search === "?tick") {
     let ticks = 0;
@@ -63,6 +69,9 @@ it.layer(Layer.mergeAll(Server.layer(Layer.empty), NodeServices.layer), {
         const server = yield* Schema.decodeEffect(ServerOrigin)(origin.origin);
         const site = yield* fakeSite(PAGE);
         const browser = yield* Server.Browser;
+
+        // The bot's first turn ends, so it does not think before what it does on the tab.
+        yield* Server.turnFinishes(bot.id);
 
         const app = yield* launch(profile, [linkTo({ _tag: "pair", server, code })]);
         const page = yield* mainWindow(app);
@@ -184,6 +193,22 @@ it.layer(Layer.mergeAll(Server.layer(Layer.empty), NodeServices.layer), {
         assert.strictEqual(drawn, true);
         yield* Effect.sleep(Duration.seconds(2));
         // Before, the pointer's face lived on and the page sent about 60 a second.
+        assert.isAtMost(yield* picturesIn(Duration.seconds(3)), 2);
+
+        // A far click: the pointer travels across the page, its arrow leaning, and
+        // lands, answers the click and closes its tag. Then the page is still again.
+        yield* browser.tools
+          .act(bot.id, stillRef, { action: "click", locator: "#far" })
+          .pipe(Effect.orDie);
+        assert.isAbove(yield* picturesIn(Duration.seconds(1)), 0);
+        yield* Effect.sleep(Duration.seconds(2));
+        assert.isAtMost(yield* picturesIn(Duration.seconds(3)), 2);
+
+        // The bot thinks on the tab: the pointer drifts once, and rests while it still thinks.
+        yield* Server.sendToBot(bot.id, "Look again.");
+        yield* Server.nextTurn(bot.id);
+        assert.isAbove(yield* picturesIn(Duration.seconds(2)), 0);
+        yield* Effect.sleep(Duration.seconds(1.5));
         assert.isAtMost(yield* picturesIn(Duration.seconds(3)), 2);
       }),
     180_000,

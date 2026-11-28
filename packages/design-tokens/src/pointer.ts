@@ -33,7 +33,7 @@ export const pointer = {
   face: 16,
   /** The tag grows from this scale as it opens. */
   tagFrom: 0.7,
-  /** How long the tag stays once the pointer stops, in ms. */
+  /** How long the tag stays once the pointer arrives, in ms. */
   tagLinger: 500,
   /** How long a click's answer lasts, the bot's face smiling, in ms; the tag stays this long and then `tagLinger`. */
   clickAnswer: 900,
@@ -43,12 +43,38 @@ export const pointer = {
   ring: 450,
   /** A click squashes the arrow to this scale, from its point, and it springs back on `pop`. */
   pressScale: 0.82,
-  /** Thinking before it acts, the pointer bobs this many px up and back, once in `bobPeriod` ms. */
-  bob: 3,
-  bobPeriod: 800,
-  /** While the person holds the tab, the pointer steps this far aside, in px, to where the page has room, and fades to `heldOpacity`. */
+  /** A click's ring spreads to this scale, over a soft disc of the bot's color at `bloomOpacity`. */
+  ringTo: 1.7,
+  bloomOpacity: 0.28,
+  /** While the person holds the tab, the pointer moves this far aside, in px, to where the page has room, and fades to `heldOpacity`. */
   aside: { x: 80, y: 36 },
   heldOpacity: 0.4,
-  /** A glide bends to one side by this share of its length, the next to the other side. */
-  bend: 0.2,
+  /**
+   * How a move travels, in page px and seconds (docs/design/design-language.md#motion).
+   * Its progress along its path rides a spring of this damping, answering in
+   * `response.shortest` for the shortest move and `response.longest` for one across
+   * half the page's diagonal or more.
+   */
+  progressDamping: 0.92,
+  response: { shortest: 0.45, longest: 0.85 },
+  /** The drawn tip follows the path through a soft filter: a spring answering in `response` s. */
+  follow: { response: 0.16, damping: 0.8 },
+  /**
+   * The arrow leans into a move, turning on its tip: at most `most` degrees, upright
+   * under `from` px/s, fully leant from `full` px/s, on a spring answering in `response` s.
+   */
+  lean: { most: 24, from: 40, full: 650, response: 0.3, damping: 0.85 },
+  /** The way the arrow points at rest, in degrees from the page's x axis: up and to the left. */
+  axis: -135,
+  /** A pointer new to the page comes in from this far below and to the right of its point, in px, answering in `arriveResponse` s. */
+  arriveFrom: { x: 26, y: 30 },
+  arriveResponse: 0.5,
+  /** Its move aside answers in this many seconds. */
+  asideResponse: 0.5,
+  /** Thinking before it acts, the tip drifts in a figure eight this many px wide each way, once in `period` ms, easing in and out over `ease` ms. */
+  drift: { size: 2.4, period: 2400, ease: 400 },
+  /** The tag keeps this far from the page's edges, in px. */
+  tagMargin: 6,
+  /** A tag flipped to the left of the point or above it sits this far from it, in px. */
+  tagGap: 8,
 } as const;

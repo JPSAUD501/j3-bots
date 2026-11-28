@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { glideCurve, glideFor } from "@j3-bots/design-tokens";
 import type { DrawnRect, PageSize, Point } from "./browser.ts";
+import { moveResponse, progressAt } from "./pointerMotion.ts";
 
 // How a live view draws a picture of the page: resting so it covers the
 // view, then zoomed and moved by the person's fingers, or following the bot
@@ -202,36 +202,23 @@ export const followedView = (
   return point === null ? from : keptInSight(from, point, page, picture, view);
 };
 
-/** Where a cubic Bézier easing curve `[x1, y1, x2, y2]` is at `t`, as CSS's `cubic-bezier()` draws it. */
-const bezierAt = (curve: readonly [number, number, number, number], t: number): number => {
-  const [x1, y1, x2, y2] = curve;
-  const along = (a: number, b: number, s: number) =>
-    3 * a * s * (1 - s) ** 2 + 3 * b * s * s * (1 - s) + s ** 3;
-  // The curve's parameter where its x is `t`, found by halving: x grows with it.
-  let low = 0;
-  let high = 1;
-  for (let step = 0; step < 24; step += 1) {
-    const middle = (low + high) / 2;
-    if (along(x1, x2, middle) < t) low = middle;
-    else high = middle;
-  }
-  return along(y1, y2, (low + high) / 2);
-};
-
-/** How long, in ms, the view glides from `from` to `to`: as a pointer's glide across that share of the view. */
-export const viewGlideFor = (from: Zoom, to: Zoom, view: Size): number => {
+/**
+ * How fast the view moves from `from` to `to`: the response, in seconds, of a
+ * pointer's move across that share of the view.
+ */
+export const viewResponseFor = (from: Zoom, to: Zoom, view: Size): number => {
   const diagonal = Math.hypot(view.width, view.height);
-  return glideFor(diagonal > 0 ? Math.hypot(to.x - from.x, to.y - from.y) / diagonal : 0);
+  return moveResponse(diagonal > 0 ? Math.hypot(to.x - from.x, to.y - from.y) / diagonal : 0);
 };
 
 /**
- * The view `elapsed` ms into a glide of `duration` ms from `from` to `to`,
- * on the curve a bot's pointer glides on: a followed view moves as the
- * pointer it follows does, and arrives.
+ * The view `elapsed` ms into its move from `from` to `to`, answering in
+ * `response` seconds on the spring a bot's pointer moves on: a followed view
+ * moves as the pointer it follows does, in a straight line, and arrives with it.
  */
-export const glidedBetween = (from: Zoom, to: Zoom, elapsed: number, duration: number): Zoom => {
-  if (duration <= 0 || elapsed >= duration) return to;
-  const share = bezierAt(glideCurve, Math.max(elapsed, 0) / duration);
+export const movedBetween = (from: Zoom, to: Zoom, elapsed: number, response: number): Zoom => {
+  const share = progressAt(elapsed / 1000, response);
+  if (share >= 1) return to;
   const between = (a: number, b: number) => a + (b - a) * share;
   return {
     scale: between(from.scale, to.scale),

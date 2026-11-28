@@ -65,6 +65,7 @@ Decisions marked **Proposed** are recommendations waiting for the project owner'
   - [0.14.0](releases/v0.14.0.md): replies, quotes and mentions, dictation, recording the screen for a bot, a connector's app in the reply, and usage data you can turn off.
   - [0.15.0](releases/v0.15.0.md): a bot's card, titles under names, rooms of bots only, AI accounts and one model picker, themes, dictation through your own service, and the browser on for new bots.
   - [0.16.0](releases/v0.16.0.md): J3 Bots' own browser, on your computer first and the server when none is open, a browser in the desktop app with a private tab, sign-ins carried between them, bots taking turns on a tab, and each bot's pointer.
+  - [0.17.0](releases/v0.17.0.md), in preparation: each bot's pointer moves the way a hand does.
 - [The every-surface check](operations/every-surface-check.md): the desktop app and the Android app against one server, run by hand: continuity, cards resolved across devices, the desktop's surfaces, and what it does not prove.
 
 ## Engineering
