@@ -41,6 +41,7 @@ import {
   WebContentsView,
   webContents as allWebContents,
 } from "electron";
+import type { BrowserPresence } from "@j3-bots/desktop-bridge";
 import { makeCookieLedger } from "./cookies.ts";
 import { freeName, savedName } from "./files.ts";
 import {
@@ -51,6 +52,7 @@ import {
   withNavigationHints,
 } from "./identity.ts";
 import { BROWSER_PARTITION, PRIVATE_PARTITION_PREFIX, pageMayGo, pageMayHave } from "./policy.ts";
+import { makeTabDrawing, type TabDrawing } from "./presence.ts";
 import { makeSignIns, type SignIns } from "./probe.ts";
 import { type DesktopTab, takeTab } from "./tab.ts";
 
@@ -99,6 +101,8 @@ export interface DesktopBrowser {
   readonly evacuate: (window: BaseWindow) => void;
   /** The person used the tab from the app's own controls: its address, back or forward. */
   readonly personUsed: (ref: BrowserTabRef) => Effect.Effect<void>;
+  /** Who is on the tabs, from the main window's page: each tab on screen shows their pointers in its page. */
+  readonly presence: (tabs: BrowserPresence) => Effect.Effect<void>;
   /**
    * Empties the shared sign-ins: the server no longer takes this device.
    * Fails when they were not emptied, and they are emptied again as the
@@ -232,6 +236,8 @@ interface Entry {
    * embedded sign-in's frame may be gone before the tab is looked at again.
    */
   readonly visited: Set<string>;
+  /** The bots' pointers in its page. */
+  readonly drawing: TabDrawing;
   ended: boolean;
 }
 
@@ -239,10 +245,13 @@ interface Entry {
  * The desktop's browser, for as long as the scope lives. A tab is born
  * hidden in a window that is never shown, and the app shows it where it
  * wants (`show`). `scratch` is a folder of its own for the files the
- * browser keeps for a moment: a bot's uploads and downloads.
+ * browser keeps for a moment: a bot's uploads and downloads. While a tab is
+ * shown, its page draws the bots on it (`presence`), with `drawing`.
  */
 export const makeDesktopBrowser = (options: {
   readonly scratch: string;
+  /** The script that draws the bots' pointers in a page: the web client's `presence.js`. */
+  readonly drawing: string;
   /** Told of each download as it begins: the person's, or a bot's on `tab`. */
   readonly downloading?: (
     item: DownloadItem,
@@ -349,6 +358,17 @@ export const makeDesktopBrowser = (options: {
     // For Electron's callbacks, which run outside any fiber.
     const runFork = Effect.runForkWith(yield* Effect.context<never>());
     const run = <A, E>(effect: Effect.Effect<A, E>) => runFork(Effect.ignore(effect));
+    /** The drawing's script, read once a page first draws a bot: none if the app carries none. */
+    const drawingScript = yield* Effect.cached(
+      Effect.try({
+        try: () => NodeFS.readFileSync(options.drawing, "utf8"),
+        catch: (cause) => failed("page", String(cause)),
+      }).pipe(
+        Effect.catch((error) =>
+          Effect.as(Effect.logWarning("The bots' pointers are not drawn in pages", error), null),
+        ),
+      ),
+    );
 
     // -----------------------------------------------------------------------
     // Sign-ins: what the sites change is sent, what the server writes is not.
@@ -675,6 +695,7 @@ export const makeDesktopBrowser = (options: {
           files,
           sent: new Set(),
           visited: new Set(),
+          drawing: yield* makeTabDrawing(contents, drawingScript),
           ended: false,
         };
         current = entry;
@@ -713,6 +734,8 @@ export const makeDesktopBrowser = (options: {
             if (leaving.length > 0) run(tellStorage(leaving));
           }
         });
+        // A new document has a new world, with no pointer drawn in it.
+        contents.on("did-navigate", () => run(entry.drawing.navigated));
         contents.on("did-frame-navigate", (_event, url) => {
           const origin = originOf(url);
           if (!tab.private && origin !== null) entry.visited.add(origin);
@@ -779,12 +802,28 @@ export const makeDesktopBrowser = (options: {
     // The page host the server drives
 
     const reported = () => [...entries.values()].filter((entry) => entry.reported && !entry.ended);
-    const pointer = (event: Extract<BrowserHostEvent, { readonly type: "pointer" }>) => tell(event);
+    // The page draws where the bot points too, without holding up what it does.
+    const pointer = (event: Extract<BrowserHostEvent, { readonly type: "pointer" }>) =>
+      Effect.andThen(
+        Effect.sync(() => {
+          const drawing = entries.get(event.tab)?.drawing;
+          if (drawing !== undefined) run(drawing.point(event));
+        }),
+        tell(event),
+      );
     const tabCalls = driverTabCalls(drivers, pointer);
     const paintingWhile = <A>(ref: BrowserTabRef, effect: Effect.Effect<A, BrowserHostError>) =>
       Effect.suspend(() => {
         const entry = entries.get(ref);
         return entry === undefined ? effect : entry.tab.painting(effect);
+      });
+    /** A picture of the page for a bot: the page's own, without the bots' pointers in it. */
+    const unmarked = <A>(ref: BrowserTabRef, capture: Effect.Effect<A, BrowserHostError>) =>
+      Effect.suspend(() => {
+        const entry = entries.get(ref);
+        return entry === undefined
+          ? capture
+          : Effect.scoped(Effect.andThen(entry.drawing.hidden, capture));
       });
 
     const hostFor = (device: DeviceId): PageHost => ({
@@ -901,14 +940,23 @@ export const makeDesktopBrowser = (options: {
         }),
       evaluate: (input) => paintingWhile(input.tab, tabCalls.evaluate(input)),
       waitFor: (input) => paintingWhile(input.tab, tabCalls.waitFor(input)),
-      snapshot: (input) => paintingWhile(input.tab, tabCalls.snapshot(input)),
-      screenshot: (input) => paintingWhile(input.tab, tabCalls.screenshot(input)),
+      snapshot: (input) =>
+        paintingWhile(
+          input.tab,
+          input.includeImage === true
+            ? unmarked(input.tab, tabCalls.snapshot(input))
+            : tabCalls.snapshot(input),
+        ),
+      screenshot: (input) =>
+        paintingWhile(input.tab, unmarked(input.tab, tabCalls.screenshot(input))),
       screencast: (input) =>
         Stream.unwrap(
           Effect.gen(function* () {
             // Painting for as long as someone watches, though the tab is hidden.
             const entry = entries.get(input.tab);
             if (entry?.reported === true) yield* entry.tab.paint;
+            // A viewer draws the bots' pointers over the picture itself.
+            if (entry !== undefined) yield* entry.drawing.hidden;
             return tabCalls.screencast(input);
           }),
         ),
@@ -1040,19 +1088,28 @@ export const makeDesktopBrowser = (options: {
           });
         }),
       show: (ref, window, bounds) => {
-        const view = entries.get(ref)?.tab.view;
-        if (view === undefined) return;
+        const entry = entries.get(ref);
+        if (entry === undefined) return;
+        const { view } = entry.tab;
         moveTo(view, window);
         view.setBounds(bounds);
         view.setVisible(true);
+        run(entry.drawing.shown(true));
       },
-      hide: (ref) => entries.get(ref)?.tab.view.setVisible(false),
+      hide: (ref) => {
+        const entry = entries.get(ref);
+        if (entry === undefined) return;
+        entry.tab.view.setVisible(false);
+        run(entry.drawing.shown(false));
+      },
       evacuate: (window) => {
         for (const [view, home] of homes) {
           if (home !== window) continue;
           view.setVisible(false);
           view.setBounds({ x: 0, y: 0, ...SHELF_SIZE });
           moveTo(view, shelf);
+          const entry = [...entries.values()].find((entry) => entry.tab.view === view);
+          if (entry !== undefined) run(entry.drawing.shown(false));
         }
       },
       personUsed: (ref) =>
@@ -1063,5 +1120,16 @@ export const makeDesktopBrowser = (options: {
           return entry?.reported === true ? tell({ type: "person.input", tab: ref }) : Effect.void;
         }),
       forgetSignIns,
+      presence: (tabs) =>
+        Effect.forEach(
+          [...entries.values()],
+          (entry) => {
+            const found = entry.tab.private
+              ? undefined
+              : tabs.find((presence) => presence.tab === entry.tab.ref);
+            return entry.drawing.onTab(found === undefined ? null : found);
+          },
+          { concurrency: "unbounded", discard: true },
+        ),
     };
   });

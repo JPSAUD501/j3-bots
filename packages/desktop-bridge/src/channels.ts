@@ -213,6 +213,8 @@ export const IPC_CHANNELS = {
   browserShortcut: "j3bots:browser-shortcut",
   /** `BrowserSuggestRequest`, answered with the address bar's `BrowserSuggestion`s. */
   browserSuggest: "j3bots:browser-suggest",
+  /** `BrowserPresence`, from the main window's page: who is on the browser's tabs. Not answered. */
+  browserPresence: "j3bots:browser-presence",
 } as const;
 
 /** What the preload script puts on `window[BRIDGE_KEY]`. Its answers are decoded by the page. */
@@ -364,4 +366,6 @@ export interface DesktopBridge {
   readonly onBrowserShortcut: (listener: (shortcut: unknown) => void) => () => void;
   /** The address bar's suggestions for what is typed (a `BrowserSuggestRequest`). */
   readonly browserSuggest: (request: unknown) => Promise<unknown>;
+  /** Tells the app who is on the browser's tabs (a `BrowserPresence`), for their pages to show. */
+  readonly browserPresence: (presence: unknown) => void;
 }

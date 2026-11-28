@@ -5,6 +5,7 @@ import { useI18n } from "../../app/context";
 import type { DesktopBrowserBridge } from "../../live/desktop";
 import type { BrowserViewerHandle } from "../BrowserViewer";
 import { DesktopBrowser } from "./DesktopBrowser";
+import { useBarPresence } from "./presence/bar";
 
 /**
  * The desktop app's own browser beside the conversation: the tab `target`
@@ -35,6 +36,7 @@ export function DesktopBrowserPanel({
   readonly ref?: Ref<BrowserViewerHandle>;
 }) {
   const { t } = useI18n();
+  const presence = useBarPresence();
   useEffect(() => {
     // A tab named from the conversation comes in front beside it, wherever it was.
     if (target !== "front") bridge.command({ _tag: "show", tab: target, place: "panel" });
@@ -50,6 +52,7 @@ export function DesktopBrowserPanel({
         bridge={bridge}
         place="panel"
         held={held}
+        presence={presence}
         onClose={over ? undefined : onClose}
         onToConversation={over ? onClose : undefined}
         onSignIns={onSignIns}

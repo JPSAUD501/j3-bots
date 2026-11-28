@@ -20,6 +20,8 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Redacted from "effect/Redacted";
+import * as Schedule from "effect/Schedule";
+import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as HttpServer from "effect/http/HttpServer";
@@ -136,6 +138,27 @@ const PAGES: Readonly<Record<string, () => HttpServerResponse.HttpServerResponse
       ),
       { contentType: "text/html" },
     ),
+  // A page whose policy lets in nothing but its own script, as a strict site's does, where a
+  // bot's pointer is drawn (browserHost.main.ts): what is pressed and typed shows in its title.
+  "/presence": () =>
+    HttpServerResponse.text(
+      page(
+        "Presence",
+        `<button id="press">Press</button>
+         <input id="field" aria-label="Field">
+         <script>
+           let pressed = 0;
+           document.getElementById("press").onclick = () => {
+             pressed += 1;
+             document.title = "Pressed " + pressed;
+           };
+         </script>`,
+      ),
+      {
+        contentType: "text/html",
+        headers: { "content-security-policy": "default-src 'none'; script-src 'unsafe-inline'" },
+      },
+    ),
   "/popup": () =>
     HttpServerResponse.text(page("Pop-up", `<button onclick="window.close()">Close</button>`), {
       contentType: "text/html",
@@ -247,6 +270,11 @@ const next = <T extends BrowserHostEvent["type"]>(
   }).pipe(Effect.timeout(STEP));
 
 const reasonOf = (error: BrowserHostError) => error.reason;
+
+/** A point of the page, as the check reads it there, and the element under it. */
+const decodePoint = Schema.decodeUnknownSync(
+  Schema.Struct({ x: Schema.Finite, y: Schema.Finite, under: Schema.NullOr(Schema.String) }),
+);
 
 describe.skipIf(process.platform !== "linux" || process.env["DISPLAY"] === undefined)(
   "the desktop's browser, driven by a server",
@@ -533,6 +561,85 @@ describe.skipIf(process.platform !== "linux" || process.env["DISPLAY"] === undef
 
           yield* host.close(tab);
           yield* next(events, "tab.closed", (event) => event.tab === tab);
+
+          // A tab on the person's screen with a bot on it draws the bot's pointer in its page
+          // (browserHost.main.ts shows it, and puts a bot on it): never in what a bot reads of
+          // the page, never in the way of the person's clicks.
+          const onScreen = BrowserTabRef.make("tab-presence");
+          yield* host.open({
+            tab: onScreen,
+            url: `${site}/presence`,
+            background: false,
+            private: false,
+          });
+          const inPage = (expression: string) =>
+            Effect.map(
+              host.evaluate({ tab: onScreen, expression, awaitPromise: false }),
+              ({ value }) => value,
+            );
+          yield* inPage(`document.querySelector("j3-presence") !== null`).pipe(
+            Effect.repeat({ until: (drawn) => drawn === true, schedule: Schedule.spaced(100) }),
+            Effect.timeout(STEP),
+          );
+          // The page sees only an element with no way in, over the whole of it, that no click lands on.
+          assert.deepStrictEqual(
+            yield* inPage(`(() => {
+              const drawing = document.querySelector("j3-presence");
+              const box = drawing.getBoundingClientRect();
+              return {
+                open: drawing.shadowRoot !== null,
+                hidden: drawing.getAttribute("aria-hidden"),
+                covers: box.width === innerWidth && box.height === innerHeight,
+              };
+            })()`),
+            { open: false, hidden: "true", covers: true },
+          );
+          yield* host.act({ tab: onScreen, action: { action: "click", locator: "#press" } });
+          assert.strictEqual(yield* inPage("document.title"), "Pressed 1");
+          const seenByBot = yield* host.snapshot({ tab: onScreen, includeImage: false });
+          assert.include(seenByBot.tree, "Press");
+          assert.notInclude(seenByBot.tree, "Pointer Check");
+          assert.notInclude(seenByBot.tree, "j3-presence");
+          // The person's click, where the bot's pointer was drawn, lands on the page.
+          const point = yield* inPage(`(() => {
+            const box = document.getElementById("press").getBoundingClientRect();
+            const x = box.x + box.width / 2;
+            const y = box.y + box.height / 2;
+            return { x, y, under: document.elementFromPoint(x, y)?.id ?? null };
+          })()`).pipe(Effect.map(decodePoint));
+          assert.strictEqual(point.under, "press");
+          const press = (action: "down" | "up") =>
+            host.input({
+              tab: onScreen,
+              input: {
+                type: "pointer",
+                action,
+                x: point.x,
+                y: point.y,
+                button: "left",
+                buttons: action === "down" ? 1 : 0,
+                clickCount: 1,
+                modifiers: 0,
+              },
+            });
+          yield* press("down");
+          yield* press("up");
+          assert.strictEqual(yield* inPage("document.title"), "Pressed 2");
+          // A picture for a bot leaves the pointer out, and it shows again after.
+          yield* host.screenshot({ tab: onScreen, format: "png" });
+          assert.strictEqual(
+            yield* inPage(`getComputedStyle(document.querySelector("j3-presence")).visibility`),
+            "visible",
+          );
+          // A field the bot types in shows the bot's caret.
+          yield* host.act({
+            tab: onScreen,
+            action: { action: "type", locator: "#field", text: "hi" },
+          });
+          assert.notStrictEqual(
+            yield* inPage(`document.getElementById("field").style.caretColor`),
+            "",
+          );
         }).pipe(withServer),
       120_000,
     );

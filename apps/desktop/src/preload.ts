@@ -170,6 +170,7 @@ const bridge: DesktopBridge = {
   onBrowserFound: (listener) => listen(IPC_CHANNELS.browserFound, listener),
   onBrowserShortcut: (listener) => listen(IPC_CHANNELS.browserShortcut, listener),
   browserSuggest: (request) => ipcRenderer.invoke(IPC_CHANNELS.browserSuggest, request),
+  browserPresence: (presence) => ipcRenderer.send(IPC_CHANNELS.browserPresence, presence),
 };
 
 contextBridge.exposeInMainWorld(BRIDGE_KEY, bridge);

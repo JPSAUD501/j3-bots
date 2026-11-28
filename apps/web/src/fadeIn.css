@@ -1,0 +1,12 @@
+/* Something that shows fades in where it stands. */
+@layer components {
+  .fade-in {
+    animation: fade-in var(--duration-state) var(--ease-out) backwards;
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}

@@ -6,6 +6,7 @@ import {
   BrowserLink,
   type BrowserPlace,
   BrowserPlacement,
+  BrowserPresence,
   BrowserShortcut,
   BrowserStill,
   BrowserSuggestion,
@@ -57,6 +58,7 @@ const decodeLink = Schema.decodeUnknownOption(BrowserLink);
 const decodeCommand = Schema.decodeUnknownOption(DesktopBrowserCommand);
 const decodePlacement = Schema.decodeUnknownOption(BrowserPlacement);
 const decodeSuggest = Schema.decodeUnknownOption(BrowserSuggestRequest);
+const decodePresence = Schema.decodeUnknownOption(BrowserPresence);
 const encodeState = Schema.encodeSync(DesktopBrowserState);
 const encodeStill = Schema.encodeSync(BrowserStill);
 const encodeFound = Schema.encodeSync(BrowserFound);
@@ -122,6 +124,8 @@ export const serveBrowser = (options: {
   readonly main: BrowserWindow;
   readonly appOrigin: string;
   readonly preload: string;
+  /** The script that draws the bots' pointers in the tabs' pages. */
+  readonly drawing: string;
   readonly fromApp: (event: IpcMainEvent | IpcMainInvokeEvent) => boolean;
   /** The server the app keeps, which alone the browser may be linked to. */
   readonly server: Effect.Effect<ServerOrigin | null>;
@@ -154,6 +158,7 @@ export const serveBrowser = (options: {
 
     const browser = yield* makeDesktopBrowser({
       scratch,
+      drawing: options.drawing,
       downloading: (item, by, tab) => {
         const id = Buffer.from(SecureRandom.randomBytesUnsafe(12)).toString("base64url");
         const download: Download = {
@@ -798,6 +803,13 @@ export const serveBrowser = (options: {
           pane.placement = decoded.value;
           draw();
         });
+        // Only the main window's page: its conversation's client knows who is on the tabs.
+        ipcMain.on(IPC_CHANNELS.browserPresence, (event, raw: unknown) => {
+          const decoded = decodePresence(raw);
+          if (senderPlace(event) === "panel" && Option.isSome(decoded)) {
+            runFork(browser.presence(decoded.value));
+          }
+        });
         ipcMain.handle(IPC_CHANNELS.browserSuggest, (event, raw: unknown) => {
           const decoded = decodeSuggest(raw);
           if (senderPlace(event) === null || Option.isNone(decoded)) return null;
@@ -816,17 +828,19 @@ export const serveBrowser = (options: {
         Effect.sync(() => {
           ipcMain.removeAllListeners(IPC_CHANNELS.browserLink);
           ipcMain.removeHandler(IPC_CHANNELS.browserState);
+          ipcMain.removeAllListeners(IPC_CHANNELS.browserPresence);
           ipcMain.removeAllListeners(IPC_CHANNELS.browserCommand);
           ipcMain.removeAllListeners(IPC_CHANNELS.browserPlace);
           ipcMain.removeHandler(IPC_CHANNELS.browserSuggest);
         }),
     );
-    // A page that loads again starts with nothing placed.
+    // A page that loads again starts with nothing placed, and knows of no bot on a tab.
     options.main.webContents.on("did-start-navigation", (details) => {
       const pane = panes.get("panel");
       if (pane !== undefined && details.isMainFrame && !details.isSameDocument) {
         pane.placement = { bounds: null, covered: false };
         draw();
+        runFork(browser.presence([]));
       }
     });
 

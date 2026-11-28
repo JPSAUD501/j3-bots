@@ -7296,21 +7296,48 @@ function ShellFrame({
   );
 }
 
+/** A tab's line while bots are on it. */
+type BotsLine = Exclude<TabLine, { readonly _tag: "empty" }>;
+
+/** The faces on each of `onTabs` and the line of the one in front, as the app's bar shows them. */
+const samplePresence = (onTabs: ReadonlyMap<BrowserTabRef, BotsLine>) => ({
+  faces: (ref: BrowserTabRef) => {
+    const line = onTabs.get(ref);
+    return line === undefined ? null : (
+      <Faces
+        faces={line.bots.map((botId) => ({
+          botId,
+          light: line._tag === "acting" && line.acting === botId ? "acting" : "still",
+        }))}
+        size={16}
+      />
+    );
+  },
+  line: (ref: BrowserTabRef) => {
+    const line = onTabs.get(ref);
+    return line === undefined ? null : <QuietLine line={line} className="min-w-0 shrink" />;
+  },
+});
+
 /** The desktop app's own browser, as `state` is, its page in front drawn. */
 function DesktopBrowserFrame({
   state,
   place,
   over = false,
+  onTabs,
 }: {
   readonly state: DesktopBrowserState;
   readonly place: BrowserPlace;
   readonly over?: boolean;
+  /** Who is on each tab: its faces, and the line by the address while it is in front. */
+  readonly onTabs?: ReadonlyMap<BrowserTabRef, BotsLine>;
 }) {
   const [bridge] = useState(() => sampleDesktopBrowser(state));
   return (
     <DesktopBrowser
       bridge={bridge}
       place={place}
+      presence={onTabs === undefined ? undefined : samplePresence(onTabs)}
       held
       onClose={place === "panel" && !over ? nothing : undefined}
       onToConversation={over ? nothing : undefined}
@@ -7382,6 +7409,31 @@ function DesktopBrowserSection() {
                 ],
               },
             )}
+          />
+        </Frame>
+        <Frame
+          label="Bots on its tabs: their faces on each tab, and by the address the line of the tab in front, counting down as the person stops using the page here, with no Now: only stopping gives it back. In the page itself each bot's pointer shows as in a view of the tab"
+          width={640}
+          height={520}
+        >
+          <DesktopBrowserFrame
+            place="panel"
+            state={desktopBrowserAt([
+              sampleDesktopTab("orders"),
+              sampleDesktopTab("tickets", {
+                url: "https://tickets.example/",
+                title: "City Tickets",
+              }),
+            ])}
+            onTabs={
+              new Map<BrowserTabRef, BotsLine>([
+                [sampleTabRef("orders"), { _tag: "back-in", bots: [ids.scout], seconds: 3 }],
+                [
+                  sampleTabRef("tickets"),
+                  { _tag: "acting", bots: [ids.wren, ids.scout], acting: ids.wren },
+                ],
+              ])
+            }
           />
         </Frame>
         <Frame

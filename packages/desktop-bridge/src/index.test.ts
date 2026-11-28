@@ -274,6 +274,7 @@ describe("the desktop bridge", () => {
       onBrowserFound: call,
       onBrowserShortcut: call,
       browserSuggest: call,
+      browserPresence: call,
     };
     const state = { ...LOCAL_OFF, server: null, pairingCode: null };
     assert.isTrue(decodes(HostedBridge, { state, ...calls }));

@@ -650,6 +650,7 @@ const program = Effect.gen(function* () {
     main: window,
     appOrigin: APP_ORIGIN,
     preload,
+    drawing: path.join(app.getAppPath(), "dist", "presence.js"),
     fromApp,
     server: Effect.map(settings.get, ({ server }) => server),
     servers: Stream.map(settings.changes, ({ server }) => server),

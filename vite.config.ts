@@ -7,6 +7,7 @@ import { defineConfig } from "vite-plus";
 
 const GENERATED_AND_VENDORED = [
   "dist",
+  "dist-presence",
   "node_modules",
   "pnpm-lock.yaml",
   "*.tsbuildinfo",

@@ -1,15 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { J3ClientProvider, useJ3Client } from "@j3-bots/client-runtime/react";
+import { J3ClientProvider, useJ3Client, useReadable } from "@j3-bots/client-runtime/react";
 import { use, useEffect, useMemo } from "react";
-import { useI18n } from "../../app/context";
+import { RosterProvider, useI18n } from "../../app/context";
 import { client, server } from "../../live/client";
 import type { Desktop } from "../../live/desktop";
 import { themesIntents, useThemesView } from "../../live/themes";
 import { ThemeRuntime } from "../../themes/ThemeRuntime";
+import { BrowserProvider } from "../context";
 import { DesktopBrowser } from "./DesktopBrowser";
+import { useBarPresence } from "./presence/bar";
 import { frontOf, tabName, useDesktopBrowser } from "./state";
 
-/** The browser's own window, in the theme the main window shows. */
+/** The browser's own window, in the theme the main window shows, with who is on each tab. */
 export function BrowserWindowLive({ app }: { readonly app: Desktop }) {
   if (server === null) return null;
   return (
@@ -31,11 +33,21 @@ function Themed({ app }: { readonly app: Desktop }) {
   useEffect(() => {
     document.title = title;
   }, [title]);
+  const roster = useReadable(j3.roster);
   return (
     <ThemeRuntime themes={themes} intents={intents}>
-      <div className="h-dvh w-dvw">
-        <DesktopBrowser bridge={app.browser} place="window" />
-      </div>
+      <RosterProvider roster={roster._tag === "ready" ? roster.value : []} engine={null}>
+        <BrowserProvider source={j3}>
+          <div className="h-dvh w-dvw">
+            <WindowBrowser app={app} />
+          </div>
+        </BrowserProvider>
+      </RosterProvider>
     </ThemeRuntime>
   );
+}
+
+function WindowBrowser({ app }: { readonly app: Desktop }) {
+  const presence = useBarPresence();
+  return <DesktopBrowser bridge={app.browser} place="window" presence={presence} />;
 }

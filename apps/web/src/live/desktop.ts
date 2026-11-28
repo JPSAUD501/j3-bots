@@ -12,6 +12,7 @@ import {
   BrowserFound,
   type BrowserLink,
   type BrowserPlacement,
+  BrowserPresence,
   BrowserShortcut,
   BrowserStill,
   BrowserSuggestion,
@@ -98,6 +99,8 @@ export interface DesktopBrowserBridge {
   readonly onShortcut: (listener: (shortcut: BrowserShortcut) => void) => () => void;
   /** What the address bar suggests for `text`, best first; with `recent`, the latest visits. */
   readonly suggest: (text: string, recent?: boolean) => Promise<ReadonlyArray<BrowserSuggestion>>;
+  /** Tells the app who is on its tabs, for their pages to show the bots' pointers. */
+  readonly presence: (presence: BrowserPresence) => void;
 }
 
 /** What the desktop app offers the page it hosts. */
@@ -422,6 +425,7 @@ const decodeFound = Schema.decodeUnknownOption(BrowserFound);
 const decodeBrowserShortcut = Schema.decodeUnknownOption(BrowserShortcut);
 const decodeSuggestions = Schema.decodeUnknownOption(Schema.Array(BrowserSuggestion));
 const encodeCommand = Schema.encodeSync(DesktopBrowserCommand);
+const encodePresence = Schema.encodeSync(BrowserPresence);
 const hosted: unknown = Reflect.get(window, BRIDGE_KEY);
 
 /** Listens through `subscribe` to what `decode` takes; answers a function that stops it. */
@@ -475,6 +479,9 @@ export const desktop: Desktop | null = Option.match(decodeBridge(hosted), {
         ask(() => bridge.browserSuggest({ text, recent }), decodeSuggestions).then(
           (answer) => answer ?? [],
         ),
+      presence: (presence) => {
+        bridge.browserPresence(encodePresence(presence));
+      },
     },
     server: bridge.state.server === null ? null : new URL(bridge.state.server),
     pairingCode: bridge.state.pairingCode,

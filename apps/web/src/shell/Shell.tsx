@@ -35,6 +35,7 @@ import { RosterProvider, useI18n } from "../app/context";
 import { BrowserIndicator } from "../browser/BrowserIndicator";
 import { BrowserToggle } from "../browser/desktop/BrowserToggle";
 import type { BrowserPlace } from "@j3-bots/desktop-bridge";
+import { PagePresence } from "../browser/desktop/presence/onTabs";
 import { useDesktopBrowserHere } from "../browser/desktop/state";
 import { desktop } from "../live/desktop";
 import { BrowserPanel } from "../browser/BrowserPanel";
@@ -902,6 +903,7 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
       <NeedsYouTitle />
       <BotCardProvider intents={cardIntents}>
         <BrowserProvider source={browser}>
+          {desktop !== null && <PagePresence bridge={desktop.browser} />}
           <AvatarConnection connected={data.connected}>
             <AppShell
               roster={roster}

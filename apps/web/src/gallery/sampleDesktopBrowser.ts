@@ -184,5 +184,7 @@ export function sampleDesktopBrowser(first: DesktopBrowserState): DesktopBrowser
               { _tag: "search", text },
             ],
       ),
+    // The gallery draws no page: who is on a tab shows only around it.
+    presence: () => {},
   };
 }

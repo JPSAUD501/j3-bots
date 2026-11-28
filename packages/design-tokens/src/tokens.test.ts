@@ -30,6 +30,7 @@ const modes = ["light", "dark"] as const;
 
 describe.each([
   ["web.css", renderWebCss],
+  ["shadow.css", () => renderWebCss("shadow")],
   ["uniwind.css", renderUniwindCss],
   ["fonts.json", renderFontManifest],
 ])("generated %s", (file, render) => {

@@ -17,6 +17,8 @@ import { defineConfig } from "vite-plus";
 // The notices of the T3 Code the bundle carries, adapted under MIT: the
 // desktop's own browser's (NOTICE) and the driver's (packages/browser), in
 // `dist/notices`.
+// The bots' pointers the browser draws in its pages (decision 0110), which the
+// web client's build bundles with the client's own pointer: `dist/presence.js`.
 // The preload script is CommonJS, the only form a sandboxed preload can be.
 // Tests use the root configuration.
 
@@ -52,6 +54,7 @@ export default defineConfig({
         { from: "node_modules/uiohook-napi/LICENSE", to: "dist/native/uiohook", flatten: false },
         { from: "notices/uiohook/*", to: "dist/native/uiohook" },
         { from: "NOTICE", to: "dist/notices/desktop-browser" },
+        { from: "../web/dist-presence/presence.js", to: "dist" },
         { from: "../../packages/browser/NOTICE", to: "dist/notices/browser" },
         ...[
           "package.json",
