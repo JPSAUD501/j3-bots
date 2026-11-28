@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // @effect-diagnostics globalDate:off -- The pages store and check dates of their own, as sites do.
-import { assert, describe, it } from "@effect/vitest";
+import { assert, describe, layer } from "@effect/vitest";
 import { BrowserIndexedDb } from "@j3-bots/contracts";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -45,14 +47,22 @@ const decodeState = Schema.decodeUnknownEffect(
   }),
 );
 
-const launched = Effect.acquireRelease(
-  Effect.promise(() =>
-    chromium.launch({
-      ...(executablePath === undefined ? {} : { executablePath }),
-      headless: true,
-    }),
+/** The Chromium the file's tests share, launched once and closed after the last: each test opens contexts of its own. */
+class TestBrowser extends Context.Service<TestBrowser, Browser>()(
+  "@j3-bots/browser/indexedDb.test/TestBrowser",
+) {}
+
+const launched = Layer.effect(
+  TestBrowser,
+  Effect.acquireRelease(
+    Effect.promise(() =>
+      chromium.launch({
+        ...(executablePath === undefined ? {} : { executablePath }),
+        headless: true,
+      }),
+    ),
+    (browser) => Effect.promise(() => browser.close()),
   ),
-  (browser) => Effect.promise(() => browser.close()),
 );
 
 /** A page of the fake site in `context`, whose every request gets an empty page. */
@@ -179,12 +189,11 @@ const holdOpen = (page: Page, name: string) =>
     name,
   );
 
-describe.skipIf(executablePath === undefined)(
-  "an origin's IndexedDB, read and written in a page",
-  () => {
-    it.live("comes back as it was, values JSON cannot hold included", () =>
+describe.skipIf(executablePath === undefined)("an origin's IndexedDB", () => {
+  layer(launched, { excludeTestServices: true })("read and written in a page", (it) => {
+    it.effect("comes back as it was, values JSON cannot hold included", () =>
       Effect.gen(function* () {
-        const browser = yield* launched;
+        const browser = yield* TestBrowser;
         const from = yield* freshPage(browser);
         yield* Effect.promise(() => storeEverything(from));
         const read = yield* readAll(from);
@@ -195,11 +204,11 @@ describe.skipIf(executablePath === undefined)(
       }).pipe(Effect.scoped),
     );
 
-    it.live("is in Playwright's own shape: each restores what the other read", () =>
+    it.effect("is in Playwright's own shape: each restores what the other read", () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const browser = yield* launched;
+        const browser = yield* TestBrowser;
         const from = yield* freshPage(browser);
         yield* Effect.promise(() => storeEverything(from));
 
@@ -231,9 +240,9 @@ describe.skipIf(executablePath === undefined)(
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
 
-    it.live("is written past a tab that holds the database open, when its shape stays", () =>
+    it.effect("is written past a tab that holds the database open, when its shape stays", () =>
       Effect.gen(function* () {
-        const browser = yield* launched;
+        const browser = yield* TestBrowser;
         const from = yield* freshPage(browser);
         yield* Effect.promise(() => storeEverything(from));
         const read = yield* readAll(from);
@@ -285,9 +294,9 @@ describe.skipIf(executablePath === undefined)(
       }).pipe(Effect.scoped),
     );
 
-    it.live("changes nothing when a version change is needed and none may be made", () =>
+    it.effect("changes nothing when a version change is needed and none may be made", () =>
       Effect.gen(function* () {
-        const browser = yield* launched;
+        const browser = yield* TestBrowser;
         const tab = yield* freshPage(browser);
         yield* Effect.promise(() => storeEverything(tab));
         yield* Effect.promise(() => holdOpen(tab, "kept"));
@@ -311,9 +320,9 @@ describe.skipIf(executablePath === undefined)(
       }).pipe(Effect.scoped),
     );
 
-    it.live("leaves a database as it was when a record cannot be written", () =>
+    it.effect("leaves a database as it was when a record cannot be written", () =>
       Effect.gen(function* () {
-        const browser = yield* launched;
+        const browser = yield* TestBrowser;
         const page = yield* freshPage(browser);
         yield* Effect.promise(() => storeEverything(page));
         const [kept] = yield* readAll(page);
@@ -341,9 +350,9 @@ describe.skipIf(executablePath === undefined)(
       }).pipe(Effect.scoped),
     );
 
-    it.live("reads nothing of an origin whose databases hold a value it cannot carry", () =>
+    it.effect("reads nothing of an origin whose databases hold a value it cannot carry", () =>
       Effect.gen(function* () {
-        const browser = yield* launched;
+        const browser = yield* TestBrowser;
         const page = yield* freshPage(browser);
         yield* Effect.promise(() => storeEverything(page));
         yield* Effect.promise(() =>
@@ -368,5 +377,5 @@ describe.skipIf(executablePath === undefined)(
         );
       }).pipe(Effect.scoped),
     );
-  },
-);
+  });
+});
